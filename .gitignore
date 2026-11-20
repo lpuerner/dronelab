@@ -7,3 +7,6 @@ results/runs/
 results/logs/
 models/
 *.zip
+
+# Papers / literature: cited in README "References", not redistributed
+*.pdf
