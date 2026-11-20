@@ -14,6 +14,7 @@ from dronebench.tasks import make_course  # noqa: E402
 pytestmark = pytest.mark.sim
 
 
+# Helper: hold all motors at a fixed rpm (no controller) and return the final state.
 def _fly_open_loop(backend, rpm, seconds, start=(0.0, 0.0, 3.0)):
     backend.reset(np.array(start))
     for _ in range(int(seconds * backend.ctrl_freq)):
@@ -21,6 +22,7 @@ def _fly_open_loop(backend, rpm, seconds, start=(0.0, 0.0, 3.0)):
     return s
 
 
+# Motors off: fall distance after 0.5 s matches 1/2 * g * t^2.
 def test_free_fall():
     with PyBulletBackend() as be:
         s = _fly_open_loop(be, 0.0, 0.5)
@@ -28,6 +30,7 @@ def test_free_fall():
         assert drop == pytest.approx(0.5 * be.params.gravity * 0.5**2, rel=0.05)
 
 
+# Wind must act on all physics sub-steps: drift = 1/2 * (F/m) * t^2, not 1/5 of it.
 def test_wind_force_acts_on_every_substep():
     f = 0.027  # N
     with PyBulletBackend(disturbances=DisturbanceConfig(wind_force=(f, 0.0, 0.0))) as be:
@@ -36,6 +39,7 @@ def test_wind_force_acts_on_every_substep():
         assert s.pos[0] == pytest.approx(expected_x, rel=0.1)
 
 
+# Nominal hover rpm keeps the nominal drone in place; a 30 % heavier one sinks.
 def test_heavier_drone_sinks_at_nominal_hover_rpm():
     with PyBulletBackend() as be:
         z_nominal = _fly_open_loop(be, be.params.hover_rpm, 0.5).pos[2]
@@ -45,6 +49,7 @@ def test_heavier_drone_sinks_at_nominal_hover_rpm():
     assert z_heavy < 3.0 - 0.1
 
 
+# The reference DSL-PID flies the hover course without crashing, final error < 5 cm.
 def test_dsl_pid_hovers():
     with PyBulletBackend() as be:
         traj = run_episode(be, DSLPIDController(be.dt), make_course("hover", hold_time=6.0))
