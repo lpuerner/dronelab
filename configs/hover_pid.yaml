@@ -1,0 +1,7 @@
+course: hover
+controller: dsl_pid
+seed: 0
+sim:
+  pyb_freq: 240
+  ctrl_freq: 48
+  physics: pyb

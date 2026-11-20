@@ -1,0 +1,13 @@
+# Example of a disturbed scenario (used from Etappe 5 on)
+course: figure8
+controller: dsl_pid
+seed: 0
+sim:
+  physics: pyb_drag
+disturbances:
+  wind_force: [0.03, 0.0, 0.0]  # ~11 % of the Crazyflie weight
+  gust_std: 0.01
+  gust_tau: 0.5
+  mass_scale: 1.2
+  motor_tau: 0.02
+  pos_noise_std: 0.005

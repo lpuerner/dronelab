@@ -1,0 +1,49 @@
+{
+  "meta": {
+    "cpu": "Intel64 Family 6 Model 142 Stepping 9, GenuineIntel",
+    "logical_cores": 4,
+    "ctrl_freq": 48
+  },
+  "rows": [
+    {
+      "setup": "sim only, 1 proc",
+      "physics": "pyb",
+      "processes": 1,
+      "steps_per_s": 1698.1,
+      "realtime_factor": 35.4,
+      "hours_per_1M_steps": 0.16
+    },
+    {
+      "setup": "sim + DSL-PID, 1 proc",
+      "physics": "pyb",
+      "processes": 1,
+      "steps_per_s": 729.3,
+      "realtime_factor": 15.2,
+      "hours_per_1M_steps": 0.38
+    },
+    {
+      "setup": "sim only, 1 proc, drag+ground+dw",
+      "physics": "pyb_gnd_drag_dw",
+      "processes": 1,
+      "steps_per_s": 675.8,
+      "realtime_factor": 14.1,
+      "hours_per_1M_steps": 0.41
+    },
+    {
+      "setup": "sim only, 2 procs",
+      "physics": "pyb",
+      "processes": 2,
+      "steps_per_s": 2879.0,
+      "realtime_factor": 60.0,
+      "hours_per_1M_steps": 0.1
+    },
+    {
+      "setup": "sim only, 4 procs",
+      "physics": "pyb",
+      "processes": 4,
+      "steps_per_s": 2738.1,
+      "realtime_factor": 57.0,
+      "hours_per_1M_steps": 0.1
+    }
+  ]
+}
