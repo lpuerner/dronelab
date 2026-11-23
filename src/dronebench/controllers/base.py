@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -15,6 +15,7 @@ class Reference:
     pos: np.ndarray  # (3,) desired position [m]
     vel: np.ndarray  # (3,) desired velocity (feed-forward) [m/s]
     yaw: float = 0.0
+    acc: np.ndarray = field(default_factory=lambda: np.zeros(3))  # feed-forward [m/s^2]
 
 
 class Controller(ABC):
@@ -26,15 +27,3 @@ class Controller(ABC):
     @abstractmethod
     def act(self, state: DroneState, ref: Reference) -> np.ndarray:
         """Return motor commands in RPM, shape (4,)."""
-
-
-class ConstantRPMController(Controller):
-    """Open-loop baseline: all motors at a fixed RPM (useful for tests/speed checks)."""
-
-    name = "constant_rpm"
-
-    def __init__(self, rpm: float = 0.0):
-        self.rpm = float(rpm)
-
-    def act(self, state: DroneState, ref: Reference) -> np.ndarray:
-        return np.full(4, self.rpm)

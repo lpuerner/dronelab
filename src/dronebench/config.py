@@ -39,12 +39,25 @@ class ArenaConfig(BaseModel):
     ground_grace_time: float = 1.0  # ground contact before this time is not a crash
 
 
+class InitNoiseConfig(BaseModel):
+    """Random initial state per seed (uniform in +-range)."""
+
+    enabled: bool = False  # off for tuning/benchmark (start on the reference); on for RL
+    pos: float = 0.10  # [m]
+    rp_deg: float = 5.0  # roll / pitch
+    yaw_deg: float = 10.0
+    vel: float = 0.10  # [m/s]
+
+
 class ExperimentConfig(BaseModel):
     sim: SimConfig = SimConfig()
     disturbances: DisturbanceConfig = DisturbanceConfig()
     arena: ArenaConfig = ArenaConfig()
+    init_noise: InitNoiseConfig = InitNoiseConfig()
     course: str = "hover"
+    speed: float = 1.0  # [m/s] along the path (ignored for hover)
     controller: str = "dsl_pid"
+    controller_params: str | None = None  # YAML with tuned gains
     seed: int = 0
 
 

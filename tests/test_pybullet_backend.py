@@ -49,10 +49,77 @@ def test_heavier_drone_sinks_at_nominal_hover_rpm():
     assert z_heavy < 3.0 - 0.1
 
 
+# Mass change scales mass and inertia together (PyBullet would otherwise recompute
+# the inertia from the collision shape, ~3x the URDF value).
+def test_mass_scale_keeps_inertia_consistent():
+    import pybullet as p
+
+    with PyBulletBackend(disturbances=DisturbanceConfig(mass_scale=1.2)) as be:
+        be.reset(np.array([0.0, 0.0, 1.0]))
+        mass, _, inertia = p.getDynamicsInfo(be.drone_id, -1, physicsClientId=be.client)[:3]
+        assert mass == pytest.approx(1.2 * be.params.mass)
+        np.testing.assert_allclose(inertia, 1.2 * be.params.inertia, rtol=1e-6)
+
+
 # The reference DSL-PID flies the hover course without crashing, final error < 5 cm.
 def test_dsl_pid_hovers():
     with PyBulletBackend() as be:
-        traj = run_episode(be, DSLPIDController(be.dt), make_course("hover", hold_time=6.0))
+        traj = run_episode(be, DSLPIDController(be.dt), make_course("hover", seed=0))
     m = compute_metrics(traj)
     assert not traj.crashed
     assert m["final_err"] < 0.05
+
+
+# Same seed -> identical flight (initial-state noise included); another seed differs.
+def test_same_seed_same_flight():
+    from dronebench.config import InitNoiseConfig
+    from dronebench.controllers import make_controller
+
+    noise = InitNoiseConfig(enabled=True)
+    course = make_course("figure8", 1.0, 0)
+    with PyBulletBackend() as be:
+        runs = [
+            run_episode(be, make_controller("pid", be.params, be.dt), course, seed=s,
+                        init_noise=noise).pos[:200]
+            for s in (5, 5, 6)
+        ]
+    np.testing.assert_array_equal(runs[0], runs[1])
+    assert not np.allclose(runs[0], runs[2])
+
+
+# Own PID, LQR and LQI hover stably; LQI also removes the offset of a 20 % heavier drone.
+@pytest.mark.parametrize("name", ["pid", "lqr", "lqi"])
+def test_own_controllers_hover(name):
+    from dronebench.controllers import make_controller
+
+    with PyBulletBackend() as be:
+        ctrl = make_controller(name, be.params, be.dt)
+        traj = run_episode(be, ctrl, make_course("hover", seed=0))
+    assert not traj.crashed and compute_metrics(traj)["final_err"] < 0.05
+
+
+def test_lqi_removes_offset_with_heavier_drone():
+    from dronebench.controllers import make_controller
+
+    errs = {}
+    for name in ("lqr", "lqi"):
+        with PyBulletBackend(disturbances=DisturbanceConfig(mass_scale=1.2)) as be:
+            traj = run_episode(be, make_controller(name, be.params, be.dt),
+                               make_course("hover", seed=0))
+        errs[name] = compute_metrics(traj)["final_err"]
+    assert errs["lqi"] < 0.02 and errs["lqi"] < errs["lqr"]
+
+
+# The flight log contains body-frame data and the quadratic-model force.
+def test_flight_log(tmp_path):
+    from dronebench.controllers import make_controller
+    from dronebench.eval.flightlog import flight_arrays, save_flight
+
+    with PyBulletBackend() as be:
+        traj = run_episode(be, make_controller("pid", be.params, be.dt),
+                           make_course("helix", 1.0, 0))
+        arr = flight_arrays(traj, be.params)
+        save_flight(tmp_path / "f.npz", traj, be.params, {"test": True})
+    n = len(traj.t)
+    assert arr["rpm_applied"].shape == (n, 4)
+    assert (tmp_path / "f.npz").exists()

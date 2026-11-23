@@ -7,7 +7,7 @@ Every simulator (PyBullet now, maybe a vectorised NumPy sim later) implements
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -20,8 +20,10 @@ class DroneState:
     vel: np.ndarray  # (3,) world frame [m/s]
     ang_vel: np.ndarray  # (3,) world frame [rad/s]
 
-    def as_vector(self) -> np.ndarray:
-        return np.concatenate([self.pos, self.quat, self.rpy, self.vel, self.ang_vel])
+
+def _cf2x_rotors() -> np.ndarray:
+    # Propeller positions (x, y) in the body frame, order 0..3 as in gym-pybullet-drones cf2x.urdf
+    return np.array([[0.028, -0.028], [-0.028, -0.028], [-0.028, 0.028], [0.028, 0.028]])
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,13 @@ class DroneParams:
     max_rpm: float
     hover_rpm: float
     gravity: float = 9.8
+    rotor_xy: np.ndarray = field(default_factory=_cf2x_rotors)  # (4, 2) [m]
+    # sign of each rotor's reaction torque about body z (PyBullet: -T0 + T1 - T2 + T3)
+    yaw_sign: np.ndarray = field(default_factory=lambda: np.array([-1.0, 1.0, -1.0, 1.0]))
+
+    @property
+    def max_thrust(self) -> float:
+        return 4 * self.kf * self.max_rpm**2
 
 
 class Backend(ABC):
@@ -59,7 +68,19 @@ class Backend(ABC):
         """Simulated time since the last reset [s]."""
 
     @abstractmethod
-    def reset(self, init_pos: np.ndarray, seed: int | None = None) -> DroneState: ...
+    def reset(
+        self,
+        init_pos: np.ndarray,
+        seed: int | None = None,
+        init_rpy: np.ndarray | None = None,
+        init_vel: np.ndarray | None = None,
+        init_ang_vel: np.ndarray | None = None,
+    ) -> DroneState: ...
+
+    @property
+    @abstractmethod
+    def last_applied_rpm(self) -> np.ndarray:
+        """Motor speeds actually applied in the last step (after motor lag)."""
 
     @abstractmethod
     def step(self, rpm: np.ndarray) -> DroneState:

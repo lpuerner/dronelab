@@ -1,5 +1,6 @@
 # Example of a disturbed scenario (used from Etappe 5 on)
 course: figure8
+speed: 1.0
 controller: dsl_pid
 seed: 0
 sim:

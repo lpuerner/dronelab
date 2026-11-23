@@ -20,6 +20,7 @@ dependencies = [
     "pyyaml",
     "pydantic>=2",
     "imageio",
+    "optuna",
     # Simulator: installed from GitHub, see README / CI
     # "gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git",
 ]

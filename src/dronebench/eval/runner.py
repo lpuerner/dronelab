@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from dronebench.backends.base import Backend
-from dronebench.config import ArenaConfig
+from dronebench.config import ArenaConfig, InitNoiseConfig
 from dronebench.controllers.base import Controller
 from dronebench.tasks.courses import Course
+from dronebench.tasks.gates import Gate
 
 
 @dataclass
@@ -26,6 +28,14 @@ class Trajectory:
     max_rpm: float
     hover_rpm: float
     course_duration: float
+    dt: float = 0.0
+    quat: np.ndarray | None = None  # (T, 4)
+    ang_vel: np.ndarray | None = None  # (T, 3) world frame
+    rpm_applied: np.ndarray | None = None  # (T, 4) after motor lag (applied during step k)
+    ref_acc: np.ndarray | None = None
+    gates: list[Gate] = field(default_factory=list)
+    wall_time_per_step: float = 0.0  # controller compute time [s]
+    meta: dict = field(default_factory=dict)
 
 
 def check_crash(t: float, pos: np.ndarray, rpy: np.ndarray, arena: ArenaConfig) -> str | None:
@@ -38,6 +48,23 @@ def check_crash(t: float, pos: np.ndarray, rpy: np.ndarray, arena: ArenaConfig) 
     return None
 
 
+def sample_initial_state(
+    start: np.ndarray, seed: int, cfg: InitNoiseConfig | None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Random start offset, attitude and velocity; depends only on the seed."""
+    if cfg is None or not cfg.enabled:
+        return np.asarray(start, float), np.zeros(3), np.zeros(3)
+    rng = np.random.default_rng([seed, 7919])  # independent of controller and course
+    pos = np.asarray(start, float) + rng.uniform(-cfg.pos, cfg.pos, 3)
+    pos[2] = max(pos[2], 0.05)
+    rp = np.deg2rad(cfg.rp_deg)
+    rpy = np.array(
+        [rng.uniform(-rp, rp), rng.uniform(-rp, rp), np.deg2rad(rng.uniform(-1, 1) * cfg.yaw_deg)]
+    )
+    vel = rng.uniform(-cfg.vel, cfg.vel, 3)
+    return pos, rpy, vel
+
+
 def run_episode(
     backend: Backend,
     controller: Controller,
@@ -45,28 +72,36 @@ def run_episode(
     arena: ArenaConfig | None = None,
     seed: int = 0,
     stop_on_crash: bool = True,
+    init_noise: InitNoiseConfig | None = None,
 ) -> Trajectory:
     arena = arena or ArenaConfig()
-    state = backend.reset(course.start, seed=seed)
+    p0, rpy0, v0 = sample_initial_state(course.start, seed, init_noise)
+    state = backend.reset(p0, seed=seed, init_rpy=rpy0, init_vel=v0)
     controller.reset()
     n_steps = int(np.ceil(course.duration * backend.ctrl_freq))
 
-    log: dict[str, list] = {k: [] for k in ("t", "pos", "rpy", "vel", "rp", "rv", "rpm")}
+    keys = ("t", "pos", "rpy", "vel", "quat", "angv", "rp", "rv", "ra", "rpm", "rpm_app")
+    log: dict[str, list] = {k: [] for k in keys}
     crash = None
+    ctrl_time = 0.0
     for k in range(n_steps):
         t = k * backend.dt
         ref = course.reference(t)
+        tic = time.perf_counter()
         rpm = controller.act(backend.observe(), ref)
-        for key, val in zip(
-            log, (t, state.pos, state.rpy, state.vel, ref.pos, ref.vel, rpm), strict=True
-        ):
+        ctrl_time += time.perf_counter() - tic
+        values = (t, state.pos, state.rpy, state.vel, state.quat, state.ang_vel,
+                  ref.pos, ref.vel, ref.acc, rpm)
+        for key, val in zip(keys[:-1], values, strict=True):
             log[key].append(val)
         state = backend.step(rpm)
+        log["rpm_app"].append(backend.last_applied_rpm)
         crash = check_crash(t + backend.dt, state.pos, state.rpy, arena)
         if crash and stop_on_crash:
             break
 
     a = {k: np.asarray(v) for k, v in log.items()}
+    n = max(len(a["t"]), 1)
     return Trajectory(
         t=a["t"],
         pos=a["pos"],
@@ -80,4 +115,18 @@ def run_episode(
         max_rpm=backend.params.max_rpm,
         hover_rpm=backend.params.hover_rpm,
         course_duration=course.duration,
+        dt=backend.dt,
+        quat=a["quat"],
+        ang_vel=a["angv"],
+        rpm_applied=a["rpm_app"],
+        ref_acc=a["ra"],
+        gates=list(course.gates),
+        wall_time_per_step=ctrl_time / n,
+        meta={
+            "family": course.family,
+            "speed": course.speed,
+            "course_seed": course.seed,
+            "feasible": course.feasible,
+            **{f"course_{k}": v for k, v in course.difficulty.items()},
+        },
     )

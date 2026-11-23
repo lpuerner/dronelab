@@ -1,4 +1,5 @@
 course: hover
+speed: 1.0
 controller: dsl_pid
 seed: 0
 sim:

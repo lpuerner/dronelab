@@ -5,8 +5,11 @@ __pycache__/
 .ruff_cache/
 results/runs/
 results/logs/
-models/
+/models/
 *.zip
 
 # Papers / literature: cited in README "References", not redistributed
 *.pdf
+results/tuning/*/study.db
+data/
+.idea/

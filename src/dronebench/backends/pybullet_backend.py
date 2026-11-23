@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import gym_pybullet_drones
 import numpy as np
 import pybullet as p
 from gym_pybullet_drones.envs.CtrlAviary import CtrlAviary
@@ -17,6 +21,19 @@ _PHYSICS = {
     "pyb_gnd": Physics.PYB_GND,
     "pyb_gnd_drag_dw": Physics.PYB_GND_DRAG_DW,
 }
+
+
+def _rotor_positions() -> np.ndarray:
+    """Propeller (x, y) positions from the installed cf2x.urdf (single source of truth)."""
+    urdf = Path(gym_pybullet_drones.__file__).parent / "assets" / "cf2x.urdf"
+    root = ET.parse(urdf).getroot()
+    xy = []
+    for i in range(4):
+        # the prop position is stored as the inertial origin of prop{i}_link (fixed joints)
+        origin = root.find(f"link[@name='prop{i}_link']/inertial/origin")
+        x, y, _ = (float(v) for v in origin.get("xyz").split())
+        xy.append([x, y])
+    return np.array(xy)
 
 
 class _DisturbedAviary(CtrlAviary):
@@ -72,11 +89,18 @@ class PyBulletBackend(Backend):
             max_rpm=float(e.MAX_RPM),
             hover_rpm=float(e.HOVER_RPM),
             gravity=float(e.G),
+            rotor_xy=_rotor_positions(),
         )
-        self._gust = GustProcess(self.dist.gust_std, self.dist.gust_tau, self._rng)
-        self._motor = MotorLag(self.dist.motor_tau)
+        self.set_disturbances(self.dist)
         self._state: DroneState | None = None
         self._steps = 0
+        self._applied = np.zeros(4)
+
+    def set_disturbances(self, disturbances: DisturbanceConfig) -> None:
+        """Change disturbances without recreating the simulator (takes effect at reset)."""
+        self.dist = disturbances
+        self._gust = GustProcess(self.dist.gust_std, self.dist.gust_tau, self._rng)
+        self._motor = MotorLag(self.dist.motor_tau)
 
     # ------------------------------------------------------------------ API
     @property
@@ -99,21 +123,50 @@ class PyBulletBackend(Backend):
     def drone_id(self) -> int:
         return self._env.DRONE_IDS[0]
 
-    def reset(self, init_pos: np.ndarray, seed: int | None = None) -> DroneState:
+    @property
+    def last_applied_rpm(self) -> np.ndarray:
+        return self._applied.copy()
+
+    def reset(
+        self,
+        init_pos: np.ndarray,
+        seed: int | None = None,
+        init_rpy: np.ndarray | None = None,
+        init_vel: np.ndarray | None = None,
+        init_ang_vel: np.ndarray | None = None,
+    ) -> DroneState:
         if seed is not None:
             self._rng = np.random.default_rng(seed)
             self._gust.rng = self._rng
-        self._env.INIT_XYZS = np.asarray(init_pos, dtype=float).reshape(1, 3)
-        obs, _ = self._env.reset(seed=seed)
+        e = self._env
+        e.INIT_XYZS = np.asarray(init_pos, dtype=float).reshape(1, 3)
+        e.INIT_RPYS = np.zeros((1, 3)) if init_rpy is None else np.reshape(init_rpy, (1, 3))
+        obs, _ = e.reset(seed=seed)
+        if init_vel is not None or init_ang_vel is not None:
+            p.resetBaseVelocity(
+                self.drone_id,
+                linearVelocity=list(np.zeros(3) if init_vel is None else init_vel),
+                angularVelocity=list(np.zeros(3) if init_ang_vel is None else init_ang_vel),
+                physicsClientId=self.client,
+            )
+            e._updateAndStoreKinematicInformation()
+            obs = e._computeObs()
         if self.dist.mass_scale != 1.0:
+            # Setting only `mass` makes PyBullet recompute the inertia from the collision
+            # shape (~3x the URDF value). Pass the inertia explicitly: a payload with the
+            # same mass distribution scales the inertia by the same factor.
+            k = self.dist.mass_scale
             p.changeDynamics(
                 self.drone_id,
                 -1,
-                mass=self._params.mass * self.dist.mass_scale,
+                mass=self._params.mass * k,
+                localInertiaDiagonal=(self._params.inertia * k).tolist(),
                 physicsClientId=self.client,
             )
         self._gust.reset()
-        self._motor.reset(np.zeros(4))
+        # motors are already spinning at hover speed when the episode starts
+        self._motor.reset(np.full(4, self._params.hover_rpm))
+        self._applied = np.full(4, self._params.hover_rpm)
         self._steps = 0
         self._state = self._parse(obs)
         return self._state
@@ -121,6 +174,7 @@ class PyBulletBackend(Backend):
     def step(self, rpm: np.ndarray) -> DroneState:
         rpm = np.clip(np.asarray(rpm, dtype=float), 0.0, self._params.max_rpm)
         applied = self._motor.step(rpm, self.dt)
+        self._applied = applied.copy()
         gust = self._gust.step(self.dt)
         self._env.external_force = np.asarray(self.dist.wind_force, dtype=float) + gust
         obs, *_ = self._env.step(applied.reshape(1, 4))
