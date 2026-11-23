@@ -19,8 +19,29 @@ class SimConfig(BaseModel):
     gui: bool = False
 
 
+class AeroConfig(BaseModel):
+    """Extra aerodynamics on top of gym-pybullet-drones (off by default).
+
+    These effects are what a standard quadrotor model (thrust ~ rpm^2, linear rotor drag,
+    motor lag) does *not* describe, so a learned residual model has something real to learn.
+    The coefficients are assumptions sized for the Crazyflie (see projects/control/README.md):
+    each effect is noticeable at 3 m/s but nominal courses stay flyable.
+    """
+
+    enabled: bool = False
+    air_density: float = 1.225  # [kg/m^3]
+    # 1) quadratic body drag F = -1/2 rho CdA |v| v; ~1/3 of the PyBullet rotor drag at 3 m/s
+    body_drag_cda: float = Field(1.0e-3, ge=0)  # Cd * A [m^2]
+    # 2) axial inflow: T_i = kf rpm_i^2 (1 - c * v_ax,i / v_h), v_h = hover induced velocity
+    inflow_coeff: float = Field(0.3, ge=0)
+    # 3) blade flapping moment in edgewise flight: M = -k * sum(Omega) * (e_z x v_perp)
+    flapping_coeff: float = Field(2.5e-8, ge=0)  # [N m / (rad/s * m/s)]
+
+
 class DisturbanceConfig(BaseModel):
     """All disturbances default to 'off'. Units: forces in N, times in s."""
+
+    aero: AeroConfig = AeroConfig()
 
     wind_force: Vec3 = (0.0, 0.0, 0.0)  # constant external force (Crazyflie weight ~0.26 N)
     gust_std: float = Field(0.0, ge=0)  # std of Ornstein-Uhlenbeck gust force [N]

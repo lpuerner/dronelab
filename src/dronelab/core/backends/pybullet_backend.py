@@ -13,7 +13,7 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics
 
 from dronelab.core.backends.base import Backend, DroneParams, DroneState
 from dronelab.core.backends.disturbances import GustProcess, MotorLag, add_sensor_noise
-from dronelab.core.config import DisturbanceConfig, SimConfig
+from dronelab.core.config import AeroConfig, DisturbanceConfig, SimConfig
 
 _PHYSICS = {
     "pyb": Physics.PYB,
@@ -36,29 +36,102 @@ def _rotor_positions() -> np.ndarray:
     return np.array(xy)
 
 
+# physics modes in which BaseAviary refreshes pos/quat/vel/ang_v before every sub-step
+_STORES_KINEMATICS = (Physics.DYN, Physics.PYB_GND, Physics.PYB_DRAG, Physics.PYB_DW,
+                      Physics.PYB_GND_DRAG_DW)
+
+
 class _DisturbedAviary(CtrlAviary):
-    """CtrlAviary that applies an external (wind) force on *every* physics sub-step.
+    """CtrlAviary with wind and extra aerodynamics applied on *every* physics sub-step.
 
     PyBullet clears external forces after each ``stepSimulation``; CtrlAviary runs
-    several sub-steps per control step, so the force has to be re-applied inside
-    the sub-step loop, i.e. in ``_physics``.
+    several sub-steps per control step, so the forces have to be re-applied inside
+    the sub-step loop, i.e. in ``_physics``. ``rpm`` there is the motor speed applied
+    in this sub-step. Wind and all extra aerodynamics are summed into one force and one
+    torque at the centre of mass (two PyBullet calls per sub-step).
     """
 
     external_force: np.ndarray = np.zeros(3)
+    aero: AeroConfig = AeroConfig()  # set with configure()
 
     def _physics(self, rpm, nth_drone):
         super()._physics(rpm, nth_drone)
-        if np.any(self.external_force):
-            body = self.DRONE_IDS[nth_drone]
-            pos, _ = p.getBasePositionAndOrientation(body, physicsClientId=self.CLIENT)
-            p.applyExternalForce(
-                body,
-                -1,
-                forceObj=self.external_force.tolist(),
-                posObj=pos,  # apply at the centre of mass -> no extra torque
-                flags=p.WORLD_FRAME,
-                physicsClientId=self.CLIENT,
-            )
+        body, cid = self.DRONE_IDS[nth_drone], self.CLIENT
+        force = np.asarray(self.external_force, dtype=float)
+        if not self.aero.enabled and not np.any(force):
+            return
+        if self.PHYSICS in _STORES_KINEMATICS and self.PYB_STEPS_PER_CTRL > 1:
+            pos, quat = self.pos[nth_drone], self.quat[nth_drone]  # current (see BaseAviary.step)
+            vel, angv = self.vel[nth_drone], self.ang_v[nth_drone]
+        else:
+            pos, quat = p.getBasePositionAndOrientation(body, physicsClientId=cid)
+            vel, angv = p.getBaseVelocity(body, physicsClientId=cid)
+        if self.aero.enabled:
+            m = p.getMatrixFromQuaternion(quat)
+            R = (m[0:3], m[3:6], m[6:9])
+            f_aero, tau = aero_wrench(self.aero, rpm, R, vel, angv, self.KF, self._rotor_list,
+                                      self._v_h)
+            force = force + f_aero
+            # torque in the world frame (direction checked in tests/test_world.py)
+            p.applyExternalTorque(body, -1, tau.tolist(), p.WORLD_FRAME, physicsClientId=cid)
+        p.applyExternalForce(body, -1, force.tolist(), list(pos), p.WORLD_FRAME,
+                             physicsClientId=cid)
+
+    def configure(self, aero: AeroConfig, rotor_xy: np.ndarray) -> None:
+        self.aero = aero
+        self.rotor_xy = np.asarray(rotor_xy, dtype=float)
+        self._rotor_list = self.rotor_xy.tolist()
+        t_hover = self.KF * self.HOVER_RPM**2  # induced velocity in hover, sqrt(T / (2 rho A))
+        self._v_h = float(np.sqrt(t_hover / (2 * aero.air_density * np.pi * self.PROP_RADIUS**2)))
+
+
+def inflow_thrust_change(cfg: AeroConfig, rpm, v_body, w_body, kf: float, rotor_xy,
+                         v_h: float) -> list[float]:
+    """Thrust change of each rotor [N] from the axial inflow v_ax,i = v_z + (w x r_i)_z
+    (climbing or the rising side of a rolling drone loses thrust)."""
+    out = []
+    for i in range(4):
+        x, y = rotor_xy[i][0], rotor_xy[i][1]
+        v_ax = v_body[2] + w_body[0] * y - w_body[1] * x
+        factor = min(max(-cfg.inflow_coeff * v_ax / v_h, -0.5), 0.5)
+        out.append(factor * kf * float(rpm[i]) ** 2)
+    return out
+
+
+def aero_wrench(
+    cfg: AeroConfig,
+    rpm,
+    R,
+    vel,
+    ang_vel,
+    kf: float,
+    rotor_xy,
+    v_h: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extra aerodynamics as one force and one torque at the centre of mass (world frame).
+
+    1) quadratic body drag, 2) axial-inflow thrust change per rotor (force along body z plus
+    its moment arm), 3) blade-flapping moment. All zero in hover. Plain Python on purpose:
+    this runs in every physics sub-step and small NumPy arrays cost more than the maths.
+    """
+    R = [[float(R[i][j]) for j in range(3)] for i in range(3)]
+    v = [float(vel[0]), float(vel[1]), float(vel[2])]
+    w = [float(ang_vel[0]), float(ang_vel[1]), float(ang_vel[2])]
+    v_b = [R[0][k] * v[0] + R[1][k] * v[1] + R[2][k] * v[2] for k in range(3)]  # R^T v
+    w_b = [R[0][k] * w[0] + R[1][k] * w[1] + R[2][k] * w[2] for k in range(3)]
+    speed = (v[0] ** 2 + v[1] ** 2 + v[2] ** 2) ** 0.5
+    c = -0.5 * cfg.air_density * cfg.body_drag_cda * speed
+    dt = inflow_thrust_change(cfg, rpm, v_b, w_b, kf, rotor_xy, v_h)
+    dt_sum = sum(dt)
+    force = [c * v[k] + R[k][2] * dt_sum for k in range(3)]
+    k_fl = cfg.flapping_coeff * sum(float(r) for r in rpm) * 2 * np.pi / 60
+    tau_b = [
+        sum(dt[i] * rotor_xy[i][1] for i in range(4)) + k_fl * v_b[1],
+        -sum(dt[i] * rotor_xy[i][0] for i in range(4)) - k_fl * v_b[0],
+        0.0,
+    ]
+    tau = [R[k][0] * tau_b[0] + R[k][1] * tau_b[1] for k in range(3)]
+    return np.array(force), np.array(tau)
 
 
 class PyBulletBackend(Backend):
@@ -101,6 +174,7 @@ class PyBulletBackend(Backend):
         self.dist = disturbances
         self._gust = GustProcess(self.dist.gust_std, self.dist.gust_tau, self._rng)
         self._motor = MotorLag(self.dist.motor_tau)
+        self._env.configure(self.dist.aero, self._params.rotor_xy)
 
     # ------------------------------------------------------------------ API
     @property

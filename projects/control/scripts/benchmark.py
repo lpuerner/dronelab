@@ -27,7 +27,7 @@ PARAMS_DIR = "projects/control/results/tuning"
 RESULTS = "projects/control/results/benchmark"
 KEY = ("controller", "part", "scenario", "family", "speed", "seed")
 FIELDS = [
-    *KEY, "kind", "level", "physics", "feasible", "rejections",
+    *KEY, "kind", "level", "world", "physics", "feasible", "rejections",
     "course_max_acc", "course_max_tilt_deg", "course_max_thrust_ratio",
     "crashed", "crash_reason", "error", "rmse_pos", "max_err", "final_err", "settling_time",
     "iae", "ise", "itae", "effort", "smoothness", "flight_time", "ctrl_ms_per_step",
@@ -56,13 +56,14 @@ def _load_gains(cfg: dict) -> dict[str, dict | None]:
 def build_specs(cfg: dict, gains: dict, chash: str) -> list[EpisodeSpec]:
     specs = []
     nominal = SCENARIOS["nominal"]
+    world = cfg.get("world", "ideal")  # configs without "world" are stage-1 (ideal world)
 
     def add(ctrl, part, scen, family, speed, seed):
         specs.append(EpisodeSpec(
             ctrl, family, float(speed), int(seed), gains[ctrl],
-            disturbances=disturbance_fields(scen, seed), physics=scen.physics,
+            disturbances=disturbance_fields(scen, seed), world=scen.world or world,
             tags={"part": part, "scenario": scen.name, "kind": scen.kind, "level": scen.level,
-                  "physics": scen.physics, "config_hash": chash},
+                  "config_hash": chash},
         ))
 
     for ctrl in cfg["controllers"]:
@@ -93,7 +94,9 @@ def main() -> None:
     ap.add_argument("--config", required=True)
     ap.add_argument("--out", default=None, help=f"CSV path (default {RESULTS}/<name>.csv)")
     ap.add_argument("--processes", type=int, default=2)
-    ap.add_argument("--log-flights", action="store_true", help="save .npz flight logs to data/")
+    ap.add_argument("--log-flights", action="store_true",
+                    help="save .npz flight logs (folders: flight_dirs in the config, "
+                         "default data/flights/<name>/)")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -110,10 +113,13 @@ def main() -> None:
              if _key({"controller": s.controller, "family": s.family, "speed": s.speed,
                       "seed": s.seed, **s.tags}) not in done]
     if args.log_flights:
-        flights = Path("data/flights") / cfg["name"]
-        flights.mkdir(parents=True, exist_ok=True)
+        default = Path("data/flights") / cfg["name"]
+        dirs = {part: Path(d) for part, d in cfg.get("flight_dirs", {}).items()}
+        for d in {*dirs.values(), default}:
+            d.mkdir(parents=True, exist_ok=True)
         specs = [EpisodeSpec(**{**s.__dict__, "log_path": str(
-            flights / f"{s.tags['part']}_{s.controller}_{s.tags['scenario']}_{s.family}_"
+            dirs.get(s.tags["part"], default)
+            / f"{s.tags['part']}_{s.controller}_{s.tags['scenario']}_{s.family}_"
             f"{s.speed:g}_{s.seed}.npz")})
             for s in specs]
     print(f"{len(done)} rows done, {len(specs)} to run; untuned: "

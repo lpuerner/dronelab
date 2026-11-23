@@ -56,6 +56,23 @@ The path is a cubic spline re-parametrised by arc length and flown at constant s
 
 Success rate (no crash, inside the arena, tilt < 80°) and – over successful flights – position RMSE, max error, steady-state error, settling time, IAE / ISE / ITAE, control effort, command smoothness, gates passed and controller compute time per step.
 
+## Simulated world
+
+| World | Contents | Used for |
+|---|---|---|
+| `ideal` | gym-pybullet-drones without aerodynamics, instant motors – identical to the textbook model (thrust ∝ rpm²) | R1 results below |
+| `real` | PyBullet rotor drag + ground effect + downwash, first-order motor lag τ = 20 ms, plus three extra effects | from stage 0b on (R1 re-tuned, R2–R4, all other subprojects) |
+
+The extra effects of the `real` world (`src/dronelab/core/world.py`, `AeroConfig`) are physically motivated but their coefficients are **assumptions** sized for the Crazyflie, so that each effect is noticeable at 3 m/s while nominal courses stay flyable:
+
+| Effect | Model | Size |
+|---|---|---|
+| Quadratic body drag | F = −½ ρ C_d A \|v\| v, C_d A = 1·10⁻³ m² | 5.5 mN at 3 m/s (PyBullet's linear rotor drag: 16.7 mN) |
+| Axial inflow | T_i = k_F Ω_i² (1 − 0.3 · v_ax,i / v_h), v_h = 4.0 m/s (momentum theory), v_ax,i includes the rotation | −7.7 % thrust when climbing at 1 m/s; damps roll and pitch rates |
+| Blade flapping | M = −2.5·10⁻⁸ · ΣΩ · (e_z × v_⊥) | nose-up, 5.5 % of the maximum roll torque at 3 m/s |
+
+With these effects the default LQR tracks 2–4× worse than in the ideal world (reference scales below), without crashing.
+
 ## Tuning and evaluation protocol
 
 Published comparisons often pit a carefully designed method against a PID baseline whose tuning is not reported. Here every tunable controller gets **the same, fixed budget and objective**:

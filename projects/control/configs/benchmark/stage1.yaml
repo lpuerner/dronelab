@@ -1,4 +1,6 @@
 # Stage 1 benchmark: classical controllers, reduced to 5 test seeds.
+# NOTE: stage1.csv was produced at commit d2cf164 with the 21 stage-1 scenarios (ideal world).
+# The current scenario set (20 scenarios for the real world) differs; use r1.yaml for new runs.
 name: stage1
 controllers: [dsl_pid, pid, lqr, lqi]
 params_dir: projects/control/results/tuning        # <params_dir>/<controller>/best_params.yaml (if present)

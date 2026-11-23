@@ -10,6 +10,6 @@ projects/*/results/logs/
 
 # Papers / literature: cited in README "References", not redistributed
 *.pdf
-projects/*/results/tuning/*/study.db
+projects/*/results/tuning*/*/study.db
 data/
 .idea/

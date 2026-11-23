@@ -27,7 +27,7 @@ from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.ticker import FormatStrFormatter, NullFormatter  # noqa: E402
 from scipy.stats import wilcoxon  # noqa: E402
 
-from dronelab.core.eval.scenarios import SCENARIOS  # noqa: E402
+from dronelab.core.eval.scenarios import scenario_order  # noqa: E402
 
 # fixed categorical order (colour follows the controller, never its rank)
 COLORS = {"dsl_pid": "#2a78d6", "pid": "#eb6834", "lqr": "#1baf7a", "lqi": "#eda100"}
@@ -178,7 +178,7 @@ def part_b(rows, ctrls, out: Path) -> list[str]:
     if not b:
         return []
     present = {r["scenario"] for r in b}
-    scen = [n for n in SCENARIOS if n in present]  # fixed protocol order
+    scen = scenario_order(present)  # fixed protocol order
     fams = [f for f in B_FAMS if any(r["family"] == f for r in b)]
     short = [LABELS[c].split(" (")[0] for c in ctrls]
     md = ["### Part B – disturbances (1 m/s), per course family", "",
@@ -390,8 +390,8 @@ def _saturation(f: Path) -> tuple[dict, float]:
     return meta, float(sat.mean()) if len(sat) else np.nan
 
 
-def saturation(flights: Path, ctrls, out: Path) -> list[str]:
-    files = sorted(flights.glob("*.npz"))
+def saturation(flights: list[Path], ctrls, out: Path) -> list[str]:
+    files = sorted(f for d in flights for f in d.glob("*.npz"))
     if not files:
         return []
     res = [_saturation(f) for f in files]
@@ -409,7 +409,7 @@ def saturation(flights: Path, ctrls, out: Path) -> list[str]:
         md.append(f"| {LABELS[c].split(' (')[0]} | " + " | ".join(cells) + " |")
 
     b = [(m, s) for m, s in res if m["part"] == "B" and m["family"] != "hover"]
-    scen = [n for n in SCENARIOS if any(m["scenario"] == n for m, _ in b)]
+    scen = scenario_order({m["scenario"] for m, _ in b})
     fig, ax = plt.subplots(figsize=(0.5 * len(scen) + 2, 3.2))
     w = 0.8 / len(ctrls)
     for k, c in enumerate(ctrls):
@@ -440,10 +440,10 @@ def _load_flight(f: Path) -> tuple[dict, dict]:
     return json.loads(str(z["meta"])), {k: z[k] for k in ("t", "pos", "ref_pos", "ref_vel")}
 
 
-def accel_bins(flights: Path, ctrls, out: Path) -> list[str]:
+def accel_bins(flights: list[Path], ctrls, out: Path) -> list[str]:
     """Tracking error per control step, grouped by the reference acceleration at that step."""
     err = defaultdict(list)  # (controller, bin) -> errors [m]
-    for f in sorted(flights.glob("*.npz")):
+    for f in sorted(f for d in flights for f in d.glob("*.npz")):
         meta, d = _load_flight(f)
         if meta.get("part") != "A" or meta["family"] == "hover" or len(d["t"]) < 3:
             continue
@@ -490,6 +490,11 @@ def accel_bins(flights: Path, ctrls, out: Path) -> list[str]:
             f"![error vs acceleration]({link(out / 'error_vs_acceleration.png')})", ""]
 
 
+# where the benchmark wrote its flight logs (see flight_dirs in the benchmark configs)
+FLIGHT_DIRS = {
+    "stage1": ["data/archive/stage1_ideal_world"],
+    "r1": ["data/surrogate/T3_courses", "data/surrogate/T4_disturbances"],
+}
 LINK_BASE = Path(".")  # image links are written relative to the README that embeds them
 
 
@@ -502,7 +507,8 @@ def main() -> None:
     ap.add_argument("--csv", default="projects/control/results/benchmark/stage1.csv")
     ap.add_argument("--tuning", default="projects/control/results/tuning")
     ap.add_argument("--readme", default="projects/control/README.md")
-    ap.add_argument("--flights", default=None, help="flight logs (default data/flights/<name>)")
+    ap.add_argument("--flights", nargs="+", default=None,
+                    help="flight-log folders (default: FLIGHT_DIRS[<name>] or data/flights/<name>)")
     args = ap.parse_args()
     global LINK_BASE
     LINK_BASE = Path(args.readme).parent
@@ -513,7 +519,8 @@ def main() -> None:
     ctrls = ctrl_order(rows)
     ms = {c: np.nanmedian([r["ctrl_ms_per_step"] for r in rows if r["controller"] == c])
           for c in ctrls}
-    flights = Path(args.flights or f"data/flights/{path.stem}")
+    flights = [Path(d) for d in
+               (args.flights or FLIGHT_DIRS.get(path.stem, [f"data/flights/{path.stem}"]))]
     md = [*tuning_table(Path(args.tuning), ctrls),
           *tuning_convergence(Path(args.tuning), ctrls, out), *part_a(rows, ctrls, out),
           *pareto(rows, ctrls, out), *accel_bins(flights, ctrls, out),

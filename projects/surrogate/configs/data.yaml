@@ -1,0 +1,11 @@
+# Surrogate datasets (rules: projects/surrogate/DATASETS.md). Seed ranges are [start, stop).
+world: real
+out_dir: data/surrogate
+params_dir: projects/control/results/tuning_real   # tuned PID / LQR / LQI of stage 0b
+v_max_range: [0.5, 3.0]     # requested maximum speed per flight, U(lo, hi)
+dither_amp: 0.1             # excitation amplitude (x hover thrust / x max torque)
+
+splits:
+  train: {excitation: [20000, 20300], courses: [20300, 20600]}
+  val:   {excitation: [21000, 21050], courses: [21050, 21100]}
+  T1:    {excitation: [22000, 22050], courses: [22050, 22100]}

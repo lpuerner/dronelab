@@ -1,15 +1,20 @@
 """Randomised, smooth and feasibility-checked flight courses.
 
-A course is generated deterministically from ``(family, speed, seed)``:
+A course is generated deterministically from ``(family, speed, seed, speed_profile)``:
 
 * the shape parameters are drawn from a family-specific range,
 * the path is a cubic spline through the shape points, re-parametrised by arc length,
 * it is flown with a trapezoidal speed profile (accelerate, cruise, decelerate) and
-  then held at the last point,
+  then held at the last point; with ``speed_profile="variable"`` the cruise speed changes
+  along the path instead (segments of 1-3 m with speeds in [0.25, speed]), used for the
+  data of the surrogate model,
 * courses that leave the arena or would need more than ``thrust_margin`` of the
   maximum thrust / more than ``max_tilt_deg`` of tilt are rejected and redrawn.
 
 ``hover`` is a set-point task (step to a target height) instead of a path.
+``excitation`` (not a benchmark family) is a random path for system identification: 6-10
+points in a 6 x 6 m box from 0.15 m (ground effect) to 2.5 m, always with a variable
+speed profile.
 """
 
 from __future__ import annotations
@@ -25,7 +30,10 @@ from dronelab.core.tasks.gates import Gate
 G = 9.8
 FAMILIES = ("hover", "figure8", "helix", "waypoints", "gates")
 TUNE_FAMILIES = ("hover", "figure8", "helix", "waypoints")  # gates = unseen test family
-_FAMILY_ID = {name: i for i, name in enumerate(FAMILIES)}
+EXTRA_FAMILIES = ("excitation",)  # surrogate data only
+_FAMILY_ID = {name: i for i, name in enumerate(FAMILIES + EXTRA_FAMILIES)}
+SPEED_PROFILES = ("constant", "variable")
+MIN_SEGMENT_SPEED = 0.25
 
 
 @dataclass(frozen=True)
@@ -117,6 +125,61 @@ class _SpeedProfile:
         return self.length, 0.0, 0.0
 
 
+class _VariableSpeedProfile:
+    """Piecewise-constant target speed along the arc length, made feasible for a maximum
+    tangential acceleration ``a`` by a forward and a backward pass (starts and ends at rest).
+    Same interface as :class:`_SpeedProfile`."""
+
+    def __init__(self, length: float, seg_ends: np.ndarray, seg_speeds: np.ndarray, a: float,
+                 ds: float = 0.01):
+        self.length, self.a = float(length), float(a)
+        n = max(int(np.ceil(length / ds)), 2) + 1
+        self._s = np.linspace(0.0, length, n)
+        h = self._s[1] - self._s[0]
+        idx = np.minimum(np.searchsorted(seg_ends, self._s, side="right"), len(seg_speeds) - 1)
+        v = np.asarray(seg_speeds, float)[idx]
+        v[0] = v[-1] = 0.0
+        for i in range(1, n):  # acceleration limit
+            v[i] = min(v[i], np.sqrt(v[i - 1] ** 2 + 2 * a * h))
+        for i in range(n - 2, -1, -1):  # braking limit
+            v[i] = min(v[i], np.sqrt(v[i + 1] ** 2 + 2 * a * h))
+        self._v = v
+        dt = 2 * h / np.maximum(v[1:] + v[:-1], 1e-9)
+        self._t = np.concatenate([[0.0], np.cumsum(dt)])
+        self.v = float(v.max())  # peak speed (like _SpeedProfile.v)
+
+    @property
+    def t_end(self) -> float:
+        return float(self._t[-1])
+
+    def many(self, t: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        out = np.array([self(float(x)) for x in np.atleast_1d(t)])
+        return out[:, 0], out[:, 1], out[:, 2]
+
+    def __call__(self, t: float) -> tuple[float, float, float]:
+        if t <= 0:
+            return 0.0, 0.0, 0.0
+        if t >= self._t[-1]:
+            return self.length, 0.0, 0.0
+        i = int(np.searchsorted(self._t, t, side="right")) - 1
+        v0, v1 = self._v[i], self._v[i + 1]
+        h = self._s[i + 1] - self._s[i]
+        acc = (v1**2 - v0**2) / (2 * h)  # constant within the cell
+        tau = t - self._t[i]
+        return float(self._s[i] + v0 * tau + 0.5 * acc * tau**2), float(v0 + acc * tau), float(acc)
+
+
+def _variable_profile(rng: np.random.Generator, length: float, v_max: float,
+                      a: float) -> _VariableSpeedProfile:
+    ends, s = [], 0.0
+    while s < length:
+        s += rng.uniform(1.0, 3.0)
+        ends.append(min(s, length))
+    speeds = rng.uniform(min(MIN_SEGMENT_SPEED, v_max), v_max, len(ends))
+    speeds[rng.integers(len(ends))] = v_max  # the requested speed is reached somewhere
+    return _VariableSpeedProfile(length, np.array(ends), speeds, a)
+
+
 # ------------------------------------------------------------------------- course
 @dataclass
 class Course:
@@ -128,7 +191,8 @@ class Course:
     hold_time: float
     setpoint: np.ndarray | None = None  # hover target
     path: _Path | None = None
-    profile: _SpeedProfile | None = None
+    profile: _SpeedProfile | _VariableSpeedProfile | None = None
+    speed_profile: str = "constant"
     gates: list[Gate] = field(default_factory=list)
     feasible: bool = True
     rejections: int = 0
@@ -249,7 +313,22 @@ def _gates(rng, n: int):
     return pts, {"n_gates": n, "gaps": [round(float(g), 3) for g in gaps]}, list(centers)
 
 
-_SAMPLERS = {"figure8": _figure8, "helix": _helix, "waypoints": _waypoints, "gates": _gates}
+def _excitation(rng):
+    """Random points for system identification, incl. low passes and large height changes."""
+    n = int(rng.integers(6, 11))
+    pts = [np.array([rng.uniform(-3, 3), rng.uniform(-3, 3), rng.uniform(0.5, 2.0)])]
+    while len(pts) < n:
+        low = rng.random() < 0.25  # ground effect
+        z = rng.uniform(0.15, 0.3) if low else rng.uniform(0.4, 2.5)
+        cand = np.array([rng.uniform(-3, 3), rng.uniform(-3, 3), z])
+        if np.linalg.norm(cand - pts[-1]) >= 1.0:
+            pts.append(cand)
+    return np.array(pts), {"n_points": n}, []
+
+
+_SAMPLERS = {"figure8": _figure8, "helix": _helix, "waypoints": _waypoints, "gates": _gates,
+             "excitation": _excitation}
+_EXCITATION_Z_MIN = 0.1
 
 
 def _gate_objects(path: _Path, centers: list[np.ndarray]) -> list[Gate]:
@@ -263,13 +342,29 @@ def _gate_objects(path: _Path, centers: list[np.ndarray]) -> list[Gate]:
 
 
 def make_course(
-    family: str, speed: float = 1.0, seed: int = 0, limits: CourseLimits | None = None
+    family: str,
+    speed: float = 1.0,
+    seed: int = 0,
+    limits: CourseLimits | None = None,
+    speed_profile: str = "constant",
 ) -> Course:
-    """Deterministic course for ``(family, speed, seed)``."""
+    """Deterministic course for ``(family, speed, seed, speed_profile)``.
+
+    With ``speed_profile="variable"``, ``speed`` is the maximum cruise speed.
+    """
     if family not in _FAMILY_ID:
-        raise ValueError(f"unknown course family {family!r}, choose from {FAMILIES}")
+        raise ValueError(f"unknown course family {family!r}, choose from "
+                         f"{FAMILIES + EXTRA_FAMILIES}")
+    if speed_profile not in SPEED_PROFILES:
+        raise ValueError(f"unknown speed profile {speed_profile!r}, choose from {SPEED_PROFILES}")
     lim = limits or CourseLimits()
+    if family == "excitation":
+        speed_profile = "variable"
+        if limits is None:
+            lim = CourseLimits(z_min=_EXCITATION_Z_MIN)
     rng = np.random.default_rng([seed, _FAMILY_ID[family]])
+    # speed segments from their own stream: same shapes for constant and variable profiles
+    rng_speed = np.random.default_rng([seed, _FAMILY_ID[family], 77])
 
     if family == "hover":
         target = np.array([0.0, 0.0, rng.uniform(0.5, 1.5)])
@@ -301,7 +396,12 @@ def make_course(
             params=params,
             hold_time=2.0,
             path=path,
-            profile=_SpeedProfile(path.length, float(speed), lim.ramp_acc),
+            profile=(
+                _variable_profile(rng_speed, path.length, float(speed), lim.ramp_acc)
+                if speed_profile == "variable"
+                else _SpeedProfile(path.length, float(speed), lim.ramp_acc)
+            ),
+            speed_profile=speed_profile,
             gates=_gate_objects(path, centers),
             rejections=attempt,
         )

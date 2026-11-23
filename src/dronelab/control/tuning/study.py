@@ -28,6 +28,7 @@ from dronelab.control.tuning.protocol import (
     validation_episodes,
 )
 from dronelab.core.eval.parallel import EpisodePool
+from dronelab.core.world import DEFAULT_WORLD
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -42,7 +43,8 @@ def tune(
     controller: str,
     n_trials: int = 200,
     processes: int = 2,
-    out_dir: str | Path = "projects/control/results/tuning",
+    out_dir: str | Path = "projects/control/results/tuning_real",
+    world: str = DEFAULT_WORLD,
     sampler_seed: int = 0,
 ) -> dict:
     space = SEARCH_SPACES[controller]
@@ -67,7 +69,7 @@ def tune(
         while n_done() < n_trials:
             trial = study.ask()
             gains = {k: trial.suggest_float(k, lo, hi, log=True) for k, (lo, hi) in space.items()}
-            res = objective_value(pool.map(tuning_episodes(controller, gains)))
+            res = objective_value(pool.map(tuning_episodes(controller, gains, world)), world)
             for k, v in res.items():
                 trial.set_user_attr(k, v)
             study.tell(trial, res["J"])
@@ -82,13 +84,13 @@ def tune(
         top = sorted(done, key=lambda t: t.value)[:TOP_K]
         val_rows, ep_rows = [], []
         for t in top:
-            rows = pool.map(validation_episodes(controller, t.params))
-            res = objective_value(rows)
+            rows = pool.map(validation_episodes(controller, t.params, world))
+            res = objective_value(rows, world)
             val_rows.append({"trial": t.number, "J_tune": t.value,
                              **{f"{k}_val": v for k, v in res.items()}})
             ep_rows += [{"trial": t.number, **r} for r in rows]
-        default_val = objective_value(pool.map(validation_episodes(controller,
-                                                                   DEFAULTS[controller])))
+        default_val = objective_value(
+            pool.map(validation_episodes(controller, DEFAULTS[controller], world)), world)
     t_total = time.perf_counter() - t0
 
     best = min(val_rows, key=lambda r: r["J_val"])
@@ -100,6 +102,7 @@ def tune(
                [{"trial": t.number, "J": t.value, **t.user_attrs, **t.params} for t in done])
     summary = {
         "controller": controller,
+        "world": world,
         "n_trials": len(done),
         "episodes_per_trial": N_TUNE,
         "validation_episodes": N_VAL,

@@ -1,0 +1,24 @@
+# R1 in the real world (stage 0b): aerodynamics + 20 ms motor lag + extra aerodynamics.
+# Same structure as stage1.yaml; controllers re-tuned in this world (tuning_real/).
+name: r1
+world: real
+controllers: [dsl_pid, pid, lqr, lqi]
+params_dir: projects/control/results/tuning_real   # <params_dir>/<controller>/best_params.yaml
+seeds: [1000, 1001, 1002, 1003, 1004]
+
+# Part A - difficulty: speed sweep, nominal conditions
+part_a:
+  families: [figure8, helix, waypoints, gates]
+  speeds: [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]   # 2.0 / 3.0 = extrapolation beyond tuning range
+  hover: true
+
+# Part B - disturbances: all 20 scenarios at 1 m/s
+part_b:
+  families: [hover, figure8, gates]
+  speed: 1.0
+  scenarios: all
+
+# --log-flights: these flights are the test sets T3 / T4 of the surrogate subproject
+flight_dirs:
+  A: data/surrogate/T3_courses
+  B: data/surrogate/T4_disturbances
