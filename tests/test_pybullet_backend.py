@@ -5,11 +5,11 @@ import pytest
 
 pytest.importorskip("gym_pybullet_drones")
 
-from dronebench.backends.pybullet_backend import PyBulletBackend  # noqa: E402
-from dronebench.config import DisturbanceConfig  # noqa: E402
-from dronebench.controllers.dsl_pid import DSLPIDController  # noqa: E402
-from dronebench.eval import compute_metrics, run_episode  # noqa: E402
-from dronebench.tasks import make_course  # noqa: E402
+from dronelab.control.dsl_pid import DSLPIDController  # noqa: E402
+from dronelab.core.backends.pybullet_backend import PyBulletBackend  # noqa: E402
+from dronelab.core.config import DisturbanceConfig  # noqa: E402
+from dronelab.core.eval import compute_metrics, run_episode  # noqa: E402
+from dronelab.core.tasks import make_course  # noqa: E402
 
 pytestmark = pytest.mark.sim
 
@@ -72,8 +72,8 @@ def test_dsl_pid_hovers():
 
 # Same seed -> identical flight (initial-state noise included); another seed differs.
 def test_same_seed_same_flight():
-    from dronebench.config import InitNoiseConfig
-    from dronebench.controllers import make_controller
+    from dronelab.control import make_controller
+    from dronelab.core.config import InitNoiseConfig
 
     noise = InitNoiseConfig(enabled=True)
     course = make_course("figure8", 1.0, 0)
@@ -90,7 +90,7 @@ def test_same_seed_same_flight():
 # Own PID, LQR and LQI hover stably; LQI also removes the offset of a 20 % heavier drone.
 @pytest.mark.parametrize("name", ["pid", "lqr", "lqi"])
 def test_own_controllers_hover(name):
-    from dronebench.controllers import make_controller
+    from dronelab.control import make_controller
 
     with PyBulletBackend() as be:
         ctrl = make_controller(name, be.params, be.dt)
@@ -99,7 +99,7 @@ def test_own_controllers_hover(name):
 
 
 def test_lqi_removes_offset_with_heavier_drone():
-    from dronebench.controllers import make_controller
+    from dronelab.control import make_controller
 
     errs = {}
     for name in ("lqr", "lqi"):
@@ -112,8 +112,8 @@ def test_lqi_removes_offset_with_heavier_drone():
 
 # The flight log contains body-frame data and the quadratic-model force.
 def test_flight_log(tmp_path):
-    from dronebench.controllers import make_controller
-    from dronebench.eval.flightlog import flight_arrays, save_flight
+    from dronelab.control import make_controller
+    from dronelab.core.eval.flightlog import flight_arrays, save_flight
 
     with PyBulletBackend() as be:
         traj = run_episode(be, make_controller("pid", be.params, be.dt),

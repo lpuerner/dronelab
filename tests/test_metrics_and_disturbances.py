@@ -3,11 +3,16 @@
 import numpy as np
 import pytest
 
-from dronebench.backends.base import DroneState
-from dronebench.backends.disturbances import GustProcess, MotorLag, _rpy_to_quat, add_sensor_noise
-from dronebench.config import DisturbanceConfig
-from dronebench.eval.metrics import compute_metrics, settling_time
-from dronebench.eval.runner import Trajectory
+from dronelab.core.backends.base import DroneState
+from dronelab.core.backends.disturbances import (
+    GustProcess,
+    MotorLag,
+    _rpy_to_quat,
+    add_sensor_noise,
+)
+from dronelab.core.config import DisturbanceConfig
+from dronelab.core.eval.metrics import compute_metrics, settling_time
+from dronelab.core.eval.runner import Trajectory
 
 
 # Helper: hover trajectory at z = 1 m with a given x error per time step.

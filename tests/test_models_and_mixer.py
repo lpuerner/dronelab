@@ -3,10 +3,10 @@
 import numpy as np
 import pytest
 
-from dronebench.backends.base import DroneParams
-from dronebench.controllers.lqr import LQRWeights, lqr_gain
-from dronebench.controllers.mixer import Mixer
-from dronebench.models.rigid_body import (
+from dronelab.control.lqr import LQRWeights, lqr_gain
+from dronelab.control.mixer import Mixer
+from dronelab.core.backends.base import DroneParams
+from dronelab.core.models.rigid_body import (
     linearize_hover,
     mixer_matrix,
     quat_to_rot,
@@ -100,7 +100,7 @@ def test_mixer_saturation_priority():
 # One control step in PyBullet matches the nominal model (checks frames, signs, mixer).
 def test_model_matches_pybullet_one_step():
     pytest.importorskip("gym_pybullet_drones")
-    from dronebench.backends.pybullet_backend import PyBulletBackend
+    from dronelab.core.backends.pybullet_backend import PyBulletBackend
 
     rng = np.random.default_rng(0)
     with PyBulletBackend() as be:

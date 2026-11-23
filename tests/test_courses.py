@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from dronebench.tasks import FAMILIES, Gate, evaluate_gates, make_course
+from dronelab.core.tasks import FAMILIES, Gate, evaluate_gates, make_course
 
 PATH_FAMILIES = [f for f in FAMILIES if f != "hover"]
 

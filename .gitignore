@@ -3,13 +3,13 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-results/runs/
-results/logs/
+projects/*/results/runs/
+projects/*/results/logs/
 /models/
 *.zip
 
 # Papers / literature: cited in README "References", not redistributed
 *.pdf
-results/tuning/*/study.db
+projects/*/results/tuning/*/study.db
 data/
 .idea/

@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dronebench"
-version = "0.1.0"
-description = "Benchmarking classical, learned (RL) and physics-informed (PINN-MPC) quadrotor controllers under disturbances."
+name = "dronelab"
+version = "0.2.0"
+description = "CPU-only quadrotor autonomy stack: control, learned dynamics, autonomous gate flight, state estimation and vision – each with its own fair benchmark."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"  # gym-pybullet-drones needs 3.12+
