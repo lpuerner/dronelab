@@ -6,7 +6,7 @@ Part of [dronelab](../../README.md). All controllers fly the same randomised cou
 
 | Stage | Methods | Status |
 |---|---|---|
-| R1 | cascaded PID (reference: gym-pybullet-drones `DSLPIDControl` [1]), own PID, LQR, LQI | done |
+| R1 | cascaded PID (reference: gym-pybullet-drones `DSLPIDControl` [1]), own PID, LQI – tuned and benchmarked in the `real` world | done |
 | R2 | INDI (incremental nonlinear dynamic inversion) | planned |
 | R3 | learned controller: PPO policy (collective thrust + body rates) | planned |
 | R4 | sampling MPC (MPPI) with the learned dynamics model from subproject 2 | planned |
@@ -32,10 +32,10 @@ python projects/control/scripts/run_course.py --config projects/control/configs/
 python projects/control/scripts/run_course.py --course gates --speed 1.5 --controller lqi --seed 1000
 python projects/control/scripts/speed_test.py                     # simulator throughput on your machine
 
-python projects/control/scripts/tune.py --controller pid lqr lqi --trials 200        # fixed tuning protocol
-python projects/control/scripts/benchmark.py --config projects/control/configs/benchmark/stage1.yaml
+python projects/control/scripts/tune.py --controller pid lqi --trials 200            # fixed tuning protocol
+python projects/control/scripts/benchmark.py --config projects/control/configs/benchmark/r1.yaml
 python projects/control/scripts/analyze.py      # tables, plots and the results block of this README
-python projects/control/scripts/plot_course.py --course gates --speed 1.5 --seed 1000   # 3D + side views
+python projects/control/scripts/plot_course.py --course gates --speed 1.5 --seed 1000 --controllers dsl_pid pid lqi   # 3D + side views
 ```
 
 ## Courses
@@ -60,8 +60,8 @@ Success rate (no crash, inside the arena, tilt < 80°) and – over successful f
 
 | World | Contents | Used for |
 |---|---|---|
-| `ideal` | gym-pybullet-drones without aerodynamics, instant motors – identical to the textbook model (thrust ∝ rpm²) | R1 results below |
-| `real` | PyBullet rotor drag + ground effect + downwash, first-order motor lag τ = 20 ms, plus three extra effects | from stage 0b on (R1 re-tuned, R2–R4, all other subprojects) |
+| `ideal` | gym-pybullet-drones without aerodynamics, instant motors – identical to the textbook model (thrust ∝ rpm²) | cross-check scenario in the benchmark; the first R1 run (incl. LQR) is in the git history |
+| `real` | PyBullet rotor drag + ground effect + downwash, first-order motor lag τ = 20 ms, plus three extra effects | default: R1 results below, R2–R4, all other subprojects |
 
 The extra effects of the `real` world (`src/dronelab/core/world.py`, `AeroConfig`) are physically motivated but their coefficients are **assumptions** sized for the Crazyflie, so that each effect is noticeable at 3 m/s while nominal courses stay flyable:
 
@@ -84,9 +84,18 @@ Published comparisons often pit a carefully designed method against a PID baseli
 * **Test**: frozen controllers on seeds 1000+ that were never used before. All controllers fly exactly the same courses, start states, wind directions and noise realisations, so results are compared pairwise (Wilcoxon signed-rank).
 * For comparison: Madebo et al. [2] tune their controller with PSO, 20 particles × 30 iterations = 600 evaluations.
 
-R1 benchmark (5 test seeds): **Part A** – speed sweep 0.25 / 0.5 / 1 / 1.5 m/s and *extrapolation* to 2 / 3 m/s on figure8, helix, waypoints, gates (+ hover); **Part B** – 21 disturbance scenarios (mass 0.8–1.3×, constant wind 0.03–0.09 N, gusts, motor lag 20–100 ms, sensor noise, drag + ground effect + downwash, two combinations) on hover, figure8 and gates at 1 m/s.
+R1 benchmark (5 test seeds, `real` world): **Part A** – speed sweep 0.25 / 0.5 / 1 / 1.5 m/s and *extrapolation* to 2 / 3 m/s on figure8, helix, waypoints, gates (+ hover); **Part B** – 20 disturbance scenarios (mass 0.8–1.3×, constant wind 0.03–0.09 N, gusts, motor lag 50 / 100 ms instead of the world's 20 ms, sensor noise, the `ideal` world as cross-check, two combinations) on hover, figure8 and gates at 1 m/s.
+
+LQR is not part of R1 in the `real` world. To save tuning time (~1.5 CPU-h per controller) only PID and LQI were re-tuned: in the first, ideal-world run LQR was as accurate as LQI but clearly less robust, because it has no integral action.
 
 ## Results (R1)
+
+**Key findings (`real` world):**
+
+* **LQI is the most accurate controller at every speed:** 1.3 cm median RMSE at 1 m/s and 3.5 cm at 3 m/s, against 2.2 / 5.1 cm for the tuned PID. Paired on the same flights, LQI beats PID in 87 % of cases. The untuned DSL-PID anchor reaches 6.6 cm at 1 m/s and survives only 20 % of the flights at 3 m/s.
+* **The model gap costs accuracy:** in the ideal world the same controllers tracked at ~0.6 cm at 1 m/s (git history); with the extra aerodynamics and the motor lag it is 2–4× more.
+* **The integrator decides the robustness:** under constant wind (0.09 N) LQI stays at 4.2 cm on figure-eights, PID degrades to 15.8 cm (×8); with 30 % extra mass 6.3 against 12.1 cm.
+* **Motor lag is the hard limit:** 50 ms costs almost nothing, at 100 ms no controller finishes a figure-eight or gate course, and the strong combination is flown by nobody.
 
 ![gates at 1.5 m/s: 3D and side views](results/figures/gates_1.5ms_seed1000.png)
 
@@ -95,13 +104,12 @@ R1 benchmark (5 test seeds): **Part A** – speed sweep 0.25 / 0.5 / 1 / 1.5 m/s
 
 | Controller | Trials | J default | J tuned | mean RMSE [cm] | CPU-h |
 |---|---|---|---|---|---|
-| PID | 200 | 2.0377 | 0.9444 | 7.4 → 5.1 | 0.77 |
-| LQR | 200 | 1.2725 | 0.9449 | 5.3 → 4.8 | 0.80 |
-| LQI | 200 | 1.2749 | 0.9607 | 5.4 → 4.9 | 0.66 |
+| PID | 200 | 2.7098 | 0.9206 | 14.3 → 6.1 | 1.40 |
+| LQI | 200 | 1.1292 | 0.8021 | 6.8 → 5.6 | 1.52 |
 
-Tuning convergence – PID: best J 1.058, 4.7 % gained in the second half; LQR: best J 1.048, 0.3 % gained in the second half; LQI: best J 1.066, 0.7 % gained in the second half.
+Tuning convergence – PID: best J 1.088, 3.7 % gained in the second half; LQI: best J 0.902, 2.7 % gained in the second half.
 
-![tuning convergence](results/benchmark/stage1/tuning_convergence.png)
+![tuning convergence](results/benchmark/r1/tuning_convergence.png)
 
 ### Part A – speed sweep (nominal)
 
@@ -109,28 +117,27 @@ Median position RMSE [cm] of successful flights / success rate, over 4 families 
 
 | Controller | 0.25 m/s | 0.5 m/s | 1 m/s | 1.5 m/s | 2 m/s | 3 m/s |
 |---|---|---|---|---|---|---|
-| DSL-PID (untuned anchor) | 0.9 / 100 % | 2.1 / 100 % | 6.2 / 100 % | 11.0 / 100 % | 14.1 / 100 % | 21.3 / 100 % |
-| PID (tuned) | 0.1 / 100 % | 0.3 / 100 % | 0.6 / 100 % | 1.0 / 100 % | 1.2 / 100 % | 1.5 / 100 % |
-| LQR (tuned) | 0.1 / 100 % | 0.3 / 100 % | 0.6 / 100 % | 1.0 / 100 % | 1.1 / 100 % | 1.2 / 100 % |
-| LQI (tuned) | 0.1 / 100 % | 0.3 / 100 % | 0.6 / 100 % | 1.0 / 100 % | 1.1 / 100 % | 1.2 / 100 % |
+| DSL-PID (untuned anchor) | 0.8 / 100 % | 2.3 / 100 % | 6.6 / 100 % | 11.4 / 100 % | 15.0 / 85 % | 39.8 / 20 % |
+| PID (tuned) | 0.6 / 100 % | 1.2 / 100 % | 2.2 / 100 % | 3.1 / 100 % | 3.9 / 100 % | 5.1 / 100 % |
+| LQI (tuned) | 0.2 / 100 % | 0.5 / 100 % | 1.3 / 100 % | 1.9 / 100 % | 2.3 / 100 % | 3.5 / 100 % |
 
 Infeasible courses (rejected by the thrust/tilt check, not flown): 3 m/s: 10.
 
-Gate course – all gates passed (successful flights): DSL-PID 96 %; PID 100 %; LQR 100 %; LQI 100 %.
+Gate course – all gates passed (successful flights): DSL-PID 96 %; PID 100 %; LQI 100 %.
 
-![speed sweep](results/benchmark/stage1/speed_sweep.png)
+![speed sweep](results/benchmark/r1/speed_sweep.png)
 
 ### Accuracy vs. smoothness (Part A, one dot per flight)
 
 Lower left is better. A controller can buy accuracy with more aggressive motor commands; the tuning objective weighs this trade-off (w_s = 0.3).
 
-![accuracy vs smoothness](results/benchmark/stage1/accuracy_vs_smoothness.png)
+![accuracy vs smoothness](results/benchmark/r1/accuracy_vs_smoothness.png)
 
 ### Error vs. required acceleration (per control step)
 
 Every control step of the nominal speed sweep is sorted by the reference acceleration at that moment (straights ≈ 0, tight turns and braking > 4 m/s²). Bars: median error, whiskers: interquartile range.
 
-![error vs acceleration](results/benchmark/stage1/error_vs_acceleration.png)
+![error vs acceleration](results/benchmark/r1/error_vs_acceleration.png)
 
 ### Part B – disturbances (1 m/s), per course family
 
@@ -138,93 +145,90 @@ Success rate and median RMSE [cm] of successful flights; in brackets the RMSE re
 
 <details><summary><b>hover</b></summary>
 
-| Scenario | DSL-PID | PID | LQR | LQI |
-|---|---|---|---|---|
-| nominal | 100 %, 14.2 (1.00) | 100 %, 15.1 (1.00) | 100 %, 14.2 (1.00) | 100 %, 14.5 (1.00) |
-| mass_0.8 | 100 %, 13.8 (0.98) | 100 %, 17.4 (1.15) | 100 %, 16.4 (1.15) | 100 %, 14.3 (0.99) |
-| mass_0.9 | 100 %, 13.9 (0.98) | 100 %, 15.8 (1.04) | 100 %, 14.5 (1.02) | 100 %, 14.3 (0.99) |
-| mass_1.1 | 100 %, 14.7 (1.04) | 100 %, 15.5 (1.03) | 100 %, 15.7 (1.10) | 100 %, 14.8 (1.02) |
-| mass_1.2 | 100 %, 15.6 (1.10) | 100 %, 17.0 (1.13) | 100 %, 18.5 (1.30) | 100 %, 15.2 (1.05) |
-| mass_1.3 | 100 %, 16.6 (1.17) | 100 %, 19.3 (1.28) | 100 %, 22.1 (1.55) | 100 %, 15.9 (1.10) |
-| wind_0.03 | 100 %, 15.1 (1.07) | 100 %, 16.2 (1.07) | 100 %, 14.6 (1.03) | 100 %, 14.5 (1.01) |
-| wind_0.06 | 100 %, 17.4 (1.23) | 100 %, 19.2 (1.27) | 100 %, 15.6 (1.10) | 100 %, 14.8 (1.02) |
-| wind_0.09 | 100 %, 20.7 (1.46) | 100 %, 23.3 (1.54) | 100 %, 17.0 (1.20) | 100 %, 15.1 (1.05) |
-| gust_0.01 | 100 %, 14.4 (1.02) | 100 %, 15.3 (1.01) | 100 %, 14.3 (1.01) | 100 %, 14.5 (1.00) |
-| gust_0.02 | 100 %, 15.3 (1.08) | 100 %, 16.2 (1.07) | 100 %, 14.7 (1.04) | 100 %, 14.7 (1.01) |
-| gust_0.04 | 100 %, 18.1 (1.28) | 100 %, 19.6 (1.30) | 100 %, 16.5 (1.16) | 100 %, 15.4 (1.07) |
-| motor_0.02 | 100 %, 14.4 (1.02) | 100 %, 15.2 (1.01) | 100 %, 14.4 (1.01) | 100 %, 14.7 (1.02) |
-| motor_0.05 | 100 %, 14.8 (1.04) | 100 %, 15.5 (1.03) | 100 %, 14.7 (1.03) | 100 %, 15.2 (1.05) |
-| motor_0.1 | 100 %, 15.0 (1.06) | 100 %, 16.1 (1.06) | 0 %, – | 0 %, – |
-| noise_low | 100 %, 14.3 (1.01) | 100 %, 15.1 (1.00) | 100 %, 14.2 (1.00) | 100 %, 14.5 (1.00) |
-| noise_mid | 100 %, 14.4 (1.02) | 100 %, 15.1 (1.00) | 100 %, 14.2 (1.00) | 100 %, 14.5 (1.00) |
-| noise_high | 0 %, – | 100 %, 15.1 (1.00) | 100 %, 14.2 (1.00) | 100 %, 14.5 (1.01) |
-| aero | 100 %, 14.2 (1.00) | 100 %, 15.1 (1.00) | 100 %, 14.2 (1.00) | 100 %, 14.4 (1.00) |
-| combo_mid | 100 %, 19.6 (1.38) | 100 %, 20.8 (1.38) | 100 %, 17.2 (1.21) | 100 %, 15.5 (1.07) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – |
+| Scenario | DSL-PID | PID | LQI |
+|---|---|---|---|
+| nominal | 100 %, 14.6 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) |
+| mass_0.8 | 100 %, 14.2 (0.97) | 100 %, 16.3 (1.11) | 100 %, 15.0 (0.98) |
+| mass_0.9 | 100 %, 14.3 (0.98) | 100 %, 15.1 (1.03) | 100 %, 15.0 (0.98) |
+| mass_1.1 | 100 %, 15.3 (1.04) | 100 %, 15.2 (1.03) | 100 %, 15.8 (1.03) |
+| mass_1.2 | 100 %, 16.1 (1.10) | 100 %, 16.4 (1.12) | 100 %, 16.5 (1.08) |
+| mass_1.3 | 100 %, 17.2 (1.18) | 100 %, 18.3 (1.24) | 100 %, 17.4 (1.13) |
+| wind_0.03 | 100 %, 15.5 (1.06) | 100 %, 15.5 (1.06) | 100 %, 15.4 (1.00) |
+| wind_0.06 | 100 %, 17.8 (1.21) | 100 %, 17.8 (1.21) | 100 %, 15.5 (1.01) |
+| wind_0.09 | 100 %, 21.0 (1.44) | 100 %, 21.1 (1.43) | 100 %, 15.6 (1.02) |
+| gust_0.01 | 100 %, 14.9 (1.02) | 100 %, 14.8 (1.01) | 100 %, 15.4 (1.00) |
+| gust_0.02 | 100 %, 15.7 (1.07) | 100 %, 15.5 (1.05) | 100 %, 15.6 (1.02) |
+| gust_0.04 | 100 %, 18.4 (1.25) | 100 %, 18.1 (1.23) | 100 %, 16.5 (1.08) |
+| motor_0.05 | 100 %, 15.1 (1.03) | 100 %, 15.1 (1.03) | 100 %, 15.7 (1.03) |
+| motor_0.1 | 100 %, 15.6 (1.06) | 100 %, 15.7 (1.07) | 100 %, 16.3 (1.06) |
+| noise_low | 100 %, 14.7 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) |
+| noise_mid | 100 %, 14.9 (1.02) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) |
+| noise_high | 0 %, – | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) |
+| ideal | 100 %, 14.2 (0.97) | 100 %, 14.1 (0.96) | 100 %, 14.9 (0.97) |
+| combo_mid | 100 %, 19.6 (1.34) | 100 %, 19.1 (1.30) | 100 %, 16.1 (1.05) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – |
 
 </details>
 
 <details><summary><b>figure8</b></summary>
 
-| Scenario | DSL-PID | PID | LQR | LQI |
-|---|---|---|---|---|
-| nominal | 100 %, 11.8 (1.00) | 100 %, 1.8 (1.00) | 100 %, 1.6 (1.00) | 100 %, 1.6 (1.00) |
-| mass_0.8 | 100 %, 9.9 (0.84) | 100 %, 8.8 (4.94) | 100 %, 10.3 (6.34) | 100 %, 3.3 (2.01) |
-| mass_0.9 | 100 %, 10.6 (0.90) | 100 %, 4.4 (2.50) | 100 %, 5.3 (3.28) | 100 %, 2.2 (1.32) |
-| mass_1.1 | 100 %, 13.1 (1.12) | 100 %, 5.3 (2.98) | 100 %, 5.4 (3.30) | 100 %, 2.2 (1.36) |
-| mass_1.2 | 100 %, 15.0 (1.27) | 100 %, 9.7 (5.47) | 100 %, 10.4 (6.36) | 100 %, 3.4 (2.07) |
-| mass_1.3 | 100 %, 17.0 (1.44) | 100 %, 14.2 (8.02) | 100 %, 15.6 (9.54) | 100 %, 4.7 (2.89) |
-| wind_0.03 | 100 %, 12.7 (1.08) | 100 %, 6.1 (3.46) | 100 %, 3.3 (2.05) | 100 %, 2.2 (1.35) |
-| wind_0.06 | 100 %, 15.5 (1.32) | 100 %, 12.0 (6.76) | 100 %, 6.2 (3.78) | 100 %, 3.4 (2.05) |
-| wind_0.09 | 100 %, 19.0 (1.62) | 100 %, 18.0 (10.18) | 100 %, 8.9 (5.46) | 100 %, 4.6 (2.82) |
-| gust_0.01 | 100 %, 12.2 (1.03) | 100 %, 3.5 (1.99) | 100 %, 2.5 (1.52) | 100 %, 2.0 (1.22) |
-| gust_0.02 | 100 %, 12.7 (1.08) | 100 %, 5.7 (3.24) | 100 %, 4.2 (2.57) | 100 %, 3.0 (1.80) |
-| gust_0.04 | 100 %, 15.3 (1.30) | 100 %, 10.8 (6.07) | 100 %, 7.6 (4.67) | 100 %, 5.2 (3.14) |
-| motor_0.02 | 100 %, 11.7 (0.99) | 100 %, 1.8 (1.02) | 100 %, 1.7 (1.04) | 100 %, 1.7 (1.03) |
-| motor_0.05 | 40 %, 7.2 (0.61) | 0 %, – | 0 %, – | 0 %, – |
-| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – |
-| noise_low | 100 %, 12.2 (1.04) | 100 %, 1.8 (1.00) | 100 %, 1.7 (1.02) | 100 %, 1.7 (1.01) |
-| noise_mid | 80 %, 11.2 (0.95) | 100 %, 1.8 (1.02) | 100 %, 1.7 (1.03) | 100 %, 1.7 (1.02) |
-| noise_high | 0 %, – | 100 %, 1.9 (1.10) | 100 %, 1.8 (1.09) | 100 %, 1.8 (1.08) |
-| aero | 100 %, 11.5 (0.98) | 100 %, 1.4 (0.82) | 100 %, 1.5 (0.90) | 100 %, 1.5 (0.89) |
-| combo_mid | 60 %, 14.1 (1.20) | 100 %, 14.2 (8.02) | 100 %, 8.2 (5.04) | 100 %, 4.1 (2.49) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – |
+| Scenario | DSL-PID | PID | LQI |
+|---|---|---|---|
+| nominal | 100 %, 10.7 (1.00) | 100 %, 1.9 (1.00) | 100 %, 2.6 (1.00) |
+| mass_0.8 | 100 %, 9.3 (0.87) | 100 %, 7.6 (3.93) | 100 %, 4.3 (1.61) |
+| mass_0.9 | 100 %, 9.9 (0.92) | 100 %, 4.0 (2.08) | 100 %, 3.1 (1.16) |
+| mass_1.1 | 100 %, 12.0 (1.12) | 100 %, 4.6 (2.37) | 100 %, 3.3 (1.26) |
+| mass_1.2 | 100 %, 13.7 (1.28) | 100 %, 8.3 (4.28) | 100 %, 4.7 (1.76) |
+| mass_1.3 | 100 %, 15.6 (1.45) | 100 %, 12.1 (6.24) | 100 %, 6.3 (2.37) |
+| wind_0.03 | 100 %, 12.0 (1.12) | 100 %, 5.5 (2.83) | 100 %, 2.9 (1.11) |
+| wind_0.06 | 100 %, 14.6 (1.36) | 100 %, 10.5 (5.45) | 100 %, 3.5 (1.33) |
+| wind_0.09 | 100 %, 18.5 (1.72) | 100 %, 15.8 (8.19) | 100 %, 4.2 (1.60) |
+| gust_0.01 | 100 %, 10.9 (1.01) | 100 %, 3.0 (1.55) | 100 %, 3.0 (1.15) |
+| gust_0.02 | 100 %, 11.0 (1.03) | 100 %, 4.8 (2.50) | 100 %, 4.1 (1.55) |
+| gust_0.04 | 100 %, 14.7 (1.37) | 100 %, 9.2 (4.78) | 100 %, 6.2 (2.33) |
+| motor_0.05 | 100 %, 11.5 (1.07) | 100 %, 1.9 (0.98) | 100 %, 3.2 (1.21) |
+| motor_0.1 | 0 %, – | 0 %, – | 0 %, – |
+| noise_low | 100 %, 10.8 (1.01) | 100 %, 1.9 (0.99) | 100 %, 2.6 (0.98) |
+| noise_mid | 80 %, 11.4 (1.06) | 100 %, 2.0 (1.01) | 100 %, 2.5 (0.96) |
+| noise_high | 0 %, – | 100 %, 2.2 (1.12) | 100 %, 2.5 (0.95) |
+| ideal | 100 %, 11.8 (1.10) | 100 %, 2.5 (1.31) | 100 %, 3.2 (1.21) |
+| combo_mid | 80 %, 16.2 (1.51) | 100 %, 12.0 (6.18) | 100 %, 4.6 (1.73) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – |
 
 </details>
 
 <details><summary><b>gates</b></summary>
 
-| Scenario | DSL-PID | PID | LQR | LQI |
-|---|---|---|---|---|
-| nominal | 100 %, 6.1 (1.00) | 100 %, 0.7 (1.00) | 100 %, 0.7 (1.00) | 100 %, 0.7 (1.00) |
-| mass_0.8 | 100 %, 6.2 (1.01) | 100 %, 7.0 (10.69) | 100 %, 10.4 (15.58) | 100 %, 2.4 (3.67) |
-| mass_0.9 | 100 %, 5.9 (0.97) | 100 %, 3.5 (5.37) | 100 %, 5.2 (7.83) | 100 %, 1.3 (1.99) |
-| mass_1.1 | 100 %, 7.2 (1.17) | 100 %, 3.6 (5.53) | 100 %, 5.2 (7.84) | 100 %, 1.3 (2.01) |
-| mass_1.2 | 100 %, 8.4 (1.38) | 100 %, 7.2 (10.91) | 100 %, 10.4 (15.59) | 100 %, 2.4 (3.68) |
-| mass_1.3 | 100 %, 10.0 (1.64) | 100 %, 10.9 (16.54) | 100 %, 15.6 (23.37) | 100 %, 3.6 (5.45) |
-| wind_0.03 | 100 %, 7.3 (1.19) | 100 %, 5.9 (8.98) | 100 %, 3.1 (4.71) | 100 %, 1.3 (1.96) |
-| wind_0.06 | 100 %, 10.4 (1.70) | 100 %, 11.9 (18.04) | 100 %, 6.2 (9.24) | 100 %, 2.4 (3.58) |
-| wind_0.09 | 100 %, 14.2 (2.32) | 100 %, 17.9 (27.19) | 100 %, 9.1 (13.64) | 100 %, 3.4 (5.16) |
-| gust_0.01 | 100 %, 6.5 (1.06) | 100 %, 3.1 (4.75) | 100 %, 2.2 (3.30) | 100 %, 1.5 (2.25) |
-| gust_0.02 | 100 %, 8.3 (1.36) | 100 %, 6.1 (9.22) | 100 %, 4.3 (6.38) | 100 %, 2.8 (4.26) |
-| gust_0.04 | 100 %, 12.3 (2.02) | 100 %, 12.0 (18.22) | 100 %, 8.3 (12.50) | 100 %, 5.6 (8.47) |
-| motor_0.02 | 100 %, 6.3 (1.02) | 100 %, 0.7 (1.00) | 100 %, 0.7 (1.00) | 100 %, 0.7 (0.99) |
-| motor_0.05 | 100 %, 6.2 (1.02) | 0 %, – | 0 %, – | 0 %, – |
-| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – |
-| noise_low | 100 %, 6.5 (1.06) | 100 %, 0.7 (1.05) | 100 %, 0.7 (1.06) | 100 %, 0.7 (1.06) |
-| noise_mid | 100 %, 8.1 (1.33) | 100 %, 0.8 (1.20) | 100 %, 0.8 (1.22) | 100 %, 0.8 (1.21) |
-| noise_high | 0 %, – | 100 %, 1.1 (1.66) | 100 %, 1.0 (1.56) | 100 %, 1.0 (1.57) |
-| aero | 100 %, 6.3 (1.03) | 100 %, 1.3 (1.93) | 100 %, 0.9 (1.34) | 100 %, 0.7 (1.08) |
-| combo_mid | 100 %, 13.2 (2.16) | 100 %, 13.9 (21.04) | 100 %, 8.3 (12.48) | 100 %, 3.4 (5.08) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – |
+| Scenario | DSL-PID | PID | LQI |
+|---|---|---|---|
+| nominal | 100 %, 6.6 (1.00) | 100 %, 2.3 (1.00) | 100 %, 1.4 (1.00) |
+| mass_0.8 | 100 %, 6.4 (0.98) | 100 %, 6.3 (2.69) | 100 %, 3.4 (2.48) |
+| mass_0.9 | 100 %, 6.1 (0.94) | 100 %, 3.6 (1.53) | 100 %, 2.0 (1.50) |
+| mass_1.1 | 100 %, 7.4 (1.13) | 100 %, 4.0 (1.73) | 100 %, 2.1 (1.57) |
+| mass_1.2 | 100 %, 8.6 (1.31) | 100 %, 6.8 (2.92) | 100 %, 3.5 (2.57) |
+| mass_1.3 | 100 %, 10.3 (1.56) | 100 %, 9.8 (4.22) | 100 %, 5.0 (3.68) |
+| wind_0.03 | 100 %, 7.3 (1.12) | 100 %, 4.8 (2.06) | 100 %, 1.5 (1.07) |
+| wind_0.06 | 100 %, 9.6 (1.46) | 100 %, 9.3 (4.00) | 100 %, 1.9 (1.39) |
+| wind_0.09 | 100 %, 12.9 (1.97) | 100 %, 14.4 (6.16) | 100 %, 2.4 (1.81) |
+| gust_0.01 | 100 %, 7.0 (1.07) | 100 %, 3.4 (1.44) | 100 %, 2.1 (1.58) |
+| gust_0.02 | 100 %, 8.5 (1.29) | 100 %, 5.2 (2.24) | 100 %, 3.6 (2.65) |
+| gust_0.04 | 100 %, 12.8 (1.95) | 100 %, 10.2 (4.40) | 100 %, 6.8 (5.02) |
+| motor_0.05 | 100 %, 6.7 (1.02) | 100 %, 2.3 (0.98) | 100 %, 1.3 (1.00) |
+| motor_0.1 | 0 %, – | 0 %, – | 0 %, – |
+| noise_low | 100 %, 7.2 (1.10) | 100 %, 2.4 (1.02) | 100 %, 1.4 (1.04) |
+| noise_mid | 100 %, 8.8 (1.34) | 100 %, 2.4 (1.03) | 100 %, 1.5 (1.11) |
+| noise_high | 0 %, – | 100 %, 2.5 (1.07) | 100 %, 1.7 (1.23) |
+| ideal | 100 %, 6.1 (0.93) | 100 %, 1.0 (0.41) | 100 %, 1.4 (1.02) |
+| combo_mid | 100 %, 13.3 (2.03) | 100 %, 11.3 (4.85) | 100 %, 3.6 (2.65) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – |
 
 </details>
 
-![heatmap](results/benchmark/stage1/disturbance_heatmap.png)
+![heatmap](results/benchmark/r1/disturbance_heatmap.png)
 
 Degradation curves (median, bars = interquartile range of the 5 seeds; missing points = no successful flight):
 
-![degradation](results/benchmark/stage1/degradation.png)
+![degradation](results/benchmark/r1/degradation.png)
 
 ### Motor saturation
 
@@ -232,14 +236,13 @@ Share of control steps in which at least one motor command sits at its limit (ma
 
 | Controller | 0.25 m/s | 0.5 m/s | 1 m/s | 1.5 m/s | 2 m/s | 3 m/s |
 |---|---|---|---|---|---|---|
-| DSL-PID | 0 % | 0 % | 0 % | 0 % | 0 % | 0 % |
+| DSL-PID | 0 % | 0 % | 0 % | 0 % | 1 % | 7 % |
 | PID | 0 % | 0 % | 0 % | 0 % | 0 % | 0 % |
-| LQR | 0 % | 0 % | 0 % | 0 % | 0 % | 0 % |
 | LQI | 0 % | 0 % | 0 % | 0 % | 0 % | 0 % |
 
 Nominal flights stay below the limits at every speed – the feasibility check admits only courses that need ≤ 80 % of the maximum thrust. Saturation appears under disturbances, above all with motor lag:
 
-![saturation](results/benchmark/stage1/saturation.png)
+![saturation](results/benchmark/r1/saturation.png)
 
 ### Paired comparison (same course, seed and disturbance; both controllers finished)
 
@@ -247,22 +250,16 @@ Hover and path courses are tested separately because their RMSE scales differ.
 
 | Courses | A vs B | n | median(RMSE_A − RMSE_B) [cm] | A better in | Wilcoxon p |
 |---|---|---|---|---|---|
-| hover | dsl_pid vs pid | 100 | -1.01 | 99 % | 4.4e-18 |
-| hover | dsl_pid vs lqr | 95 | +0.02 | 47 % | 7.9e-01 |
-| hover | dsl_pid vs lqi | 95 | +0.00 | 49 % | 9.7e-03 |
-| hover | pid vs lqr | 100 | +0.84 | 16 % | 2.1e-09 |
-| hover | pid vs lqi | 100 | +1.05 | 0 % | 3.9e-18 |
-| hover | lqr vs lqi | 100 | +0.22 | 36 % | 3.5e-05 |
-| path courses | dsl_pid vs pid | 277 | +4.77 | 12 % | 3.0e-39 |
-| path courses | dsl_pid vs lqr | 277 | +5.49 | 8 % | 4.0e-39 |
-| path courses | dsl_pid vs lqi | 277 | +7.05 | 0 % | 3.5e-47 |
-| path courses | pid vs lqr | 290 | +0.07 | 26 % | 1.2e-11 |
-| path courses | pid vs lqi | 290 | +0.21 | 9 % | 4.1e-45 |
-| path courses | lqr vs lqi | 290 | +0.01 | 26 % | 1.1e-21 |
+| hover | dsl_pid vs pid | 95 | -0.08 | 65 % | 1.2e-04 |
+| hover | dsl_pid vs lqi | 95 | -0.37 | 69 % | 1.2e-01 |
+| hover | pid vs lqi | 100 | -0.09 | 57 % | 2.8e-01 |
+| path courses | dsl_pid vs pid | 267 | +4.10 | 4 % | 5.7e-44 |
+| path courses | dsl_pid vs lqi | 267 | +6.47 | 0 % | 1.5e-45 |
+| path courses | pid vs lqi | 290 | +1.00 | 13 % | 7.9e-38 |
 
-Controller compute time per step (median): dsl_pid 0.902 ms, pid 0.507 ms, lqr 0.206 ms, lqi 0.223 ms.
+Controller compute time per step (median): dsl_pid 1.244 ms, pid 0.731 ms, lqi 0.303 ms.
 
-_1760 episodes, git f70b31c-dirty, config f303f9309b_
+_1275 episodes, git 15c6cca-dirty, config 5aad03090e_
 <!-- STAGE1-RESULTS:END -->
 
 ## References

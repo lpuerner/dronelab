@@ -21,8 +21,10 @@ from matplotlib.ticker import MaxNLocator  # noqa: E402
 
 from dronelab.control import make_controller  # noqa: E402
 from dronelab.core.backends.pybullet_backend import PyBulletBackend  # noqa: E402
+from dronelab.core.config import DisturbanceConfig, SimConfig  # noqa: E402
 from dronelab.core.eval import compute_metrics, run_episode  # noqa: E402
 from dronelab.core.tasks import make_course  # noqa: E402
+from dronelab.core.world import DEFAULT_WORLD, WORLDS, resolve  # noqa: E402
 
 COLORS = {"dsl_pid": "#2a78d6", "pid": "#eb6834", "lqr": "#1baf7a", "lqi": "#eda100"}
 LABELS = {"dsl_pid": "DSL-PID", "pid": "PID", "lqr": "LQR", "lqi": "LQI"}
@@ -54,13 +56,15 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.5)
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--controllers", nargs="+", default=list(COLORS))
-    ap.add_argument("--params-dir", default="projects/control/results/tuning")
+    ap.add_argument("--params-dir", default="projects/control/results/tuning_real")
+    ap.add_argument("--world", default=DEFAULT_WORLD, choices=list(WORLDS))
     ap.add_argument("--out", default="projects/control/results/figures")
     args = ap.parse_args()
 
     course = make_course(args.course, args.speed, args.seed)
     trajs, mets = {}, {}
-    with PyBulletBackend() as be:
+    physics, dist = resolve(args.world)
+    with PyBulletBackend(SimConfig(physics=physics), DisturbanceConfig(**dist)) as be:
         for c in args.controllers:
             f = Path(args.params_dir) / c / "best_params.yaml"
             gains = yaml.safe_load(f.read_text()) if f.exists() else None
