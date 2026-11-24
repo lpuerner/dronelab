@@ -238,7 +238,8 @@ class Surrogate(nn.Module):
             f_res, t_res = out[..., :3], out[..., 3:]
         return (*self.phys.step(pos, vel, rot, omega, m1, f_res, t_res), m1)
 
-    def rollout(self, pos, vel, rot, omega, u, warmup: int, horizon: int, dist=None):
+    def rollout(self, pos, vel, rot, omega, u, warmup: int, horizon: int, dist=None,
+                policy=None):
         """Open-loop prediction from recorded commands.
 
         ``pos, vel, rot, omega``: true states of shape (B, >= warmup + 1, ...); the first
@@ -247,6 +248,8 @@ class Surrogate(nn.Module):
         (B, warmup + horizon, 4). Returns predicted (pos, vel, rot, omega) for the indices
         ``warmup + 1 ... warmup + horizon``, each (B, horizon, ...). ``dist``: optional
         (acc (B, 3) world frame, alpha (B, 3) body frame) added in every predicted step.
+        ``policy``: optional closed-loop command ``policy(j, pos, vel, rot, omega) -> rpm``
+        for prediction step j (e.g. an inner rate loop); ``u`` then only needs the warm-up.
         """
         if self.net is not None and warmup < self.window - 1:
             raise ValueError("warmup must be >= window - 1")
@@ -262,7 +265,7 @@ class Surrogate(nn.Module):
         feats = feats[len(feats) - (self.window - 1):] if self.window > 1 else []
         out = []
         for j in range(horizon):
-            uk = u[:, warmup + j]
+            uk = u[:, warmup + j] if policy is None else policy(j, *x)
             win = None
             if self.net is not None:
                 feats.append(self._features(*x, uk, m))

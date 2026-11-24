@@ -46,7 +46,9 @@ def tune(
     out_dir: str | Path = "projects/control/results/tuning_real",
     world: str = DEFAULT_WORLD,
     sampler_seed: int = 0,
+    validate: bool = True,
 ) -> dict:
+    """``validate=False``: only run the trials (a pilot); the same study continues later."""
     space = SEARCH_SPACES[controller]
     out = Path(out_dir) / controller
     out.mkdir(parents=True, exist_ok=True)
@@ -78,6 +80,13 @@ def tune(
                       f"best={study.best_value:.4f}  ({time.perf_counter() - t0:.0f} s)",
                       flush=True)
         t_tune = time.perf_counter() - t0
+        if not validate:
+            done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            _write_csv(out / "trials.csv",
+                       [{"trial": t.number, "J": t.value, **t.user_attrs, **t.params}
+                        for t in done])
+            return {"controller": controller, "n_trials": len(done), "best_J": study.best_value,
+                    "best_params": study.best_params, "wall_time_tuning_s": round(t_tune, 1)}
 
         # validation of the top-k trials (and the defaults) on unseen seeds
         done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]

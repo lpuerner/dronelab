@@ -2,7 +2,7 @@ from dronelab.core.controller import Controller, Reference
 
 __all__ = ["CONTROLLERS", "Controller", "Reference", "make_controller"]
 
-CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi")
+CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi", "mppi_hybrid", "mppi_urdf")
 
 
 def make_controller(
@@ -34,4 +34,10 @@ def _base(name: str, params, ctrl_dt: float, gains: dict | None) -> Controller:
         from dronelab.control.lqr import LQRController
 
         return LQRController(params, ctrl_dt, gains, integral=name == "lqi")
+    if name.removesuffix("_nodob") in ("mppi_hybrid", "mppi_urdf", "mppi_mlp"):
+        from dronelab.control.mppi import MPPIController
+
+        model = name.removesuffix("_nodob").removeprefix("mppi_")
+        return MPPIController(params, ctrl_dt, gains, model=model,
+                              dob=not name.endswith("_nodob"))
     raise ValueError(f"unknown controller {name!r}, choose from {CONTROLLERS}")

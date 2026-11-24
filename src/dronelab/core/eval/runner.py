@@ -78,6 +78,8 @@ def run_episode(
     p0, rpy0, v0 = sample_initial_state(course.start, seed, init_noise)
     state = backend.reset(p0, seed=seed, init_rpy=rpy0, init_vel=v0)
     controller.reset()
+    if hasattr(controller, "set_course"):  # controllers with a reference preview (MPPI)
+        controller.set_course(course)
     n_steps = int(np.ceil(course.duration * backend.ctrl_freq))
 
     keys = ("t", "pos", "rpy", "vel", "quat", "angv", "rp", "rv", "ra", "rpm", "rpm_app")

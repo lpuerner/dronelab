@@ -26,6 +26,7 @@ from dataclasses import fields
 import numpy as np
 
 from dronelab.control.lqr import LQRWeights
+from dronelab.control.mppi import MPPIGains
 from dronelab.control.pid import PIDGains
 from dronelab.core.eval.parallel import EpisodeSpec
 from dronelab.core.tasks import TUNE_FAMILIES
@@ -62,13 +63,16 @@ def _defaults(cls) -> dict:
 _PID = _defaults(PIDGains)
 _LQR = _defaults(LQRWeights)
 _LQR_ONLY = {k: v for k, v in _LQR.items() if not k.startswith("int_")}
+_MPPI = _defaults(MPPIGains)
 
 SEARCH_SPACES: dict[str, dict[str, tuple[float, float]]] = {
     "pid": _log_space(_PID, wide=tuple(k for k in _PID if "_ki_" in k)),
     "lqr": _log_space(_LQR_ONLY),
     "lqi": _log_space(_LQR),
+    "mppi_hybrid": _log_space(_MPPI),
+    "mppi_urdf": _log_space(_MPPI),
 }
-DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR}
+DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR, "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
 
 
 def _episodes(controller: str, seeds: range, n: int, gains: dict | None,
