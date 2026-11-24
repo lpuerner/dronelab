@@ -27,6 +27,7 @@ from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from matplotlib.ticker import FormatStrFormatter, NullFormatter  # noqa: E402
 from scipy.stats import wilcoxon  # noqa: E402
 
+from dronelab.core.eval.plots import save_captioned  # noqa: E402
 from dronelab.core.eval.scenarios import scenario_order  # noqa: E402
 
 # fixed categorical order (colour follows the controller, never its rank)
@@ -161,7 +162,12 @@ def part_a(rows, ctrls, out: Path) -> list[str]:
     fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="upper center",
                ncol=len(ctrls), frameon=False, fontsize=9)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
-    fig.savefig(out / "speed_sweep.png", dpi=130)
+    save_captioned(fig, out / "speed_sweep.png", "Part A - tracking error vs. path speed",
+                   "Test: every controller flies the same courses (5 test seeds per family) "
+                   "at a constant speed, without disturbances. Shown: position RMSE of the "
+                   "successful flights per course family, median with interquartile range "
+                   "(log scale). Grey area: speeds above 1.5 m/s, outside the tuning range "
+                   "(extrapolation).")
     plt.close(fig)
     return md + ["", f"![speed sweep]({link(out / 'speed_sweep.png')})", ""]
 
@@ -228,9 +234,13 @@ def part_b(rows, ctrls, out: Path) -> list[str]:
     cb = fig.colorbar(im, ax=axes, fraction=0.02, pad=0.01)
     cb.set_label("log2(RMSE / RMSE nominal)", color=MUTED)
     cb.outline.set_visible(False)
-    fig.suptitle("Degradation per family; % = success rate (if < 100 %)", color=INK,
-                 fontsize=10, x=0.01, ha="left")
-    fig.savefig(out / "disturbance_heatmap.png", dpi=130, bbox_inches="tight")
+    save_captioned(fig, out / "disturbance_heatmap.png", "Part B - degradation under "
+                   "disturbances",
+                   "Test: hover, figure-eight and gate courses at 1 m/s (5 test seeds) under "
+                   "each disturbance scenario. Shown: median RMSE relative to the same "
+                   "controller's nominal flights (1.0 = no degradation, colour = log2 of the "
+                   "ratio); a percentage below the number is the success rate if flights "
+                   "crashed, '-' = no successful flight.")
     plt.close(fig)
 
     # degradation curves: rows = families, columns = disturbance kinds, median + IQR
@@ -257,7 +267,12 @@ def part_b(rows, ctrls, out: Path) -> list[str]:
     fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="upper center", ncol=len(ctrls),
                frameon=False, fontsize=9)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(out / "degradation.png", dpi=130)
+    save_captioned(fig, out / "degradation.png", "Part B - error vs. disturbance strength",
+                   "Test: same flights as the heatmap, grouped by disturbance type (columns) "
+                   "and course family (rows); the leftmost point of each panel is the "
+                   "nominal flight. Shown: position RMSE of successful flights, median with "
+                   "interquartile range over the 5 seeds; a missing point means no flight "
+                   "survived.")
     plt.close(fig)
     return md + [f"![heatmap]({link(out / 'disturbance_heatmap.png')})", "",
                  "Degradation curves (median, bars = interquartile range of the 5 seeds; "
@@ -333,10 +348,13 @@ def tuning_convergence(tdir: Path, ctrls, out: Path) -> list[str]:
     ax.set_ylim(lo * 0.95, hi)
     style(ax, "trial", "objective J (lower is better)")
     ax.legend(frameon=False, fontsize=8)
-    ax.set_title("Tuning convergence (line = best so far, dots = single trials)",
-                 color=INK, fontsize=10, loc="left")
     fig.tight_layout()
-    fig.savefig(out / "tuning_convergence.png", dpi=130)
+    save_captioned(fig, out / "tuning_convergence.png", "Tuning convergence",
+                   "Test: Optuna TPE, 200 trials per controller; each trial flies 8 nominal "
+                   "episodes (hover, figure-eight, helix, waypoints; tuning seeds 0-99). "
+                   "Shown: objective J of every trial (dots) and the best J so far (line); "
+                   "lower is better, trial 0 = hand-set default gains. A flat line at the "
+                   "end means the budget was sufficient.")
     plt.close(fig)
     return ["Tuning convergence – " + "; ".join(md) + ".", "",
             f"![tuning convergence]({link(out / 'tuning_convergence.png')})", ""]
@@ -368,7 +386,12 @@ def pareto(rows, ctrls, out: Path) -> list[str]:
     fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="upper center",
                ncol=len(ctrls), frameon=False, fontsize=9)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
-    fig.savefig(out / "accuracy_vs_smoothness.png", dpi=130)
+    save_captioned(fig, out / "accuracy_vs_smoothness.png", "Accuracy vs. smoothness",
+                   "Test: the nominal speed sweep (Part A), one dot per flight. Shown: "
+                   "position RMSE (x) against the mean change of the motor commands per "
+                   "control step (y), both log scale. Lower left is better; a controller can "
+                   "buy accuracy with more aggressive commands, which the tuning objective "
+                   "penalises (weight 0.3).")
     plt.close(fig)
     return ["### Accuracy vs. smoothness (Part A, one dot per flight)", "",
             "Lower left is better. A controller can buy accuracy with more aggressive motor "
@@ -420,10 +443,13 @@ def saturation(flights: list[Path], ctrls, out: Path) -> list[str]:
     ax.set_xticks(range(len(scen)), scen, rotation=60, ha="right", fontsize=8)
     style(ax, "", "steps saturated [%]")
     ax.legend(frameon=False, fontsize=8, ncol=len(ctrls), loc="upper left")
-    ax.set_title("Motor saturation under disturbances (figure8 + gates, 1 m/s, mean)",
-                 color=INK, fontsize=10, loc="left")
     fig.tight_layout()
-    fig.savefig(out / "saturation.png", dpi=130)
+    save_captioned(fig, out / "saturation.png", "Motor saturation under disturbances",
+                   "Test: Part B, figure-eight and gate courses at 1 m/s, crashed flights "
+                   "included. Shown: share of control steps in which at least one motor "
+                   "command sits at its limit (max rpm or the minimum), mean over flights. "
+                   "Saturated motors mean the controller asks for more than the drone can "
+                   "deliver.")
     plt.close(fig)
     md += ["", "Nominal flights stay below the limits at every speed – the feasibility check "
            "admits only courses that need ≤ 80 % of the maximum thrust. Saturation appears "
@@ -478,10 +504,14 @@ def accel_bins(flights: list[Path], ctrls, out: Path) -> list[str]:
                                                                       strict=True)], fontsize=8)
     style(ax, "reference acceleration [m/s²]", "position error [cm]")
     ax.legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
-    ax.set_title("Error per control step vs. required acceleration "
-                 "(Part A, all path courses and speeds)", color=INK, fontsize=10, loc="left")
     fig.tight_layout()
-    fig.savefig(out / "error_vs_acceleration.png", dpi=130)
+    save_captioned(fig, out / "error_vs_acceleration.png", "Tracking error vs. required "
+                   "acceleration",
+                   "Test: every control step of the nominal speed sweep (Part A, all path "
+                   "courses and speeds), sorted by the acceleration the reference demands at "
+                   "that moment (straights ~0, tight turns and braking > 4 m/s2). Shown: "
+                   "median position error per bin, whiskers = interquartile range, log "
+                   "scale; the number of steps per bin is below the label.")
     plt.close(fig)
     return ["### Error vs. required acceleration (per control step)", "",
             "Every control step of the nominal speed sweep is sorted by the reference "
@@ -504,8 +534,8 @@ def link(p: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", default="projects/control/results/benchmark/stage1.csv")
-    ap.add_argument("--tuning", default="projects/control/results/tuning")
+    ap.add_argument("--csv", default="projects/control/results/benchmark/r1.csv")
+    ap.add_argument("--tuning", default="projects/control/results/tuning_real")
     ap.add_argument("--readme", default="projects/control/README.md")
     ap.add_argument("--flights", nargs="+", default=None,
                     help="flight-log folders (default: FLIGHT_DIRS[<name>] or data/flights/<name>)")

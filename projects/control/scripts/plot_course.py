@@ -23,6 +23,7 @@ from dronelab.control import make_controller  # noqa: E402
 from dronelab.core.backends.pybullet_backend import PyBulletBackend  # noqa: E402
 from dronelab.core.config import DisturbanceConfig, SimConfig  # noqa: E402
 from dronelab.core.eval import compute_metrics, run_episode  # noqa: E402
+from dronelab.core.eval.plots import save_captioned  # noqa: E402
 from dronelab.core.tasks import make_course  # noqa: E402
 from dronelab.core.world import DEFAULT_WORLD, WORLDS, resolve  # noqa: E402
 
@@ -110,13 +111,17 @@ def main() -> None:
         if k == 2:
             handles, labels = ax.get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False, fontsize=8.5)
-    fig.suptitle(f"{args.course} @ {args.speed:g} m/s, seed {args.seed}", color=INK,
-                 fontsize=11, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0.07, 1, 0.97))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{args.course}_{args.speed:g}ms_seed{args.seed}.png"
-    fig.savefig(path, dpi=130)
+    save_captioned(
+        fig, path, f"{args.course} course at {args.speed:g} m/s (seed {args.seed}, "
+                   f"{args.world} world)",
+        "Every controller flies the same generated course from the same start, without "
+        "disturbances. Shown: the flown paths against the reference (dashed) in 3D and in "
+        "three projections; the axes are not to scale, so small lateral deviations stay "
+        "visible. Legend: position RMSE and passed gates per controller.")
     print(f"figure -> {path}")
 
 

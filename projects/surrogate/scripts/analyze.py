@@ -22,12 +22,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.stats import wilcoxon  # noqa: E402
 
+from dronelab.core.eval.plots import save_captioned  # noqa: E402
 from dronelab.surrogate.datasets import T2_MAX_SPEED  # noqa: E402
 from dronelab.surrogate.evaluate import HORIZONS  # noqa: E402
 
 KINDS = ("phys_urdf", "phys", "phys_mlp", "mlp")
 LABEL = {"phys_urdf": "phys (URDF)", "phys": "phys", "phys_mlp": "phys+mlp", "mlp": "mlp"}
 COLOR = {"phys_urdf": "#9467bd", "phys": "#7f7f7f", "phys_mlp": "#1f77b4", "mlp": "#d62728"}
+OPEN_LOOP = ("Open-loop: from many start points on each test flight the model predicts ahead "
+             "with the recorded motor commands only, never seeing the true state again. ")
 TIMING_KEY = {"phys_urdf": "phys", "phys": "phys", "phys_mlp": "phys+mlp", "mlp": "mlp"}
 SET_DESC = {"T1": "in distribution: new flights like training",
             "T2": "speed extrapolation: T1 flights > 1.5 m/s",
@@ -143,11 +146,16 @@ def disturbance_section(root: Path, figs: Path, res: dict, flights: dict, md: li
     ax.set_xticks(x, labels, rotation=45, ha="right", fontsize=8)
     ax.set_yscale("log")
     ax.set_ylabel(f"position error at {H_TXT[20]} [cm]")
-    ax.set_title("Disturbance estimation: pale = without, solid = with the estimate (median)")
     ax.grid(alpha=0.3, axis="y", which="both")
     ax.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(figs / "disturbance_estimation.png", dpi=120)
+    save_captioned(fig, figs / "disturbance_estimation.png", "Disturbance estimation",
+                   OPEN_LOOP +
+                   "Before each prediction a constant extra force and torque is estimated "
+                   "from the one-step errors of the last 4 known steps (83 ms) and kept over "
+                   "the horizon. Shown: median position error after 0.42 s per T4 "
+                   "disturbance scenario (and undisturbed T1); pale bar = without, solid bar "
+                   "= with the estimate, log scale.", dpi=120)
     plt.close(fig)
 
 
@@ -185,7 +193,13 @@ def training_curves(models_dir: Path, figs: Path, kind: str) -> None:
         ax.legend(fontsize=7)
     axes[0][0].set_ylabel("scaled rollout loss (20 steps)")
     fig.tight_layout()
-    fig.savefig(figs / f"training_{kind}.png", dpi=120)
+    save_captioned(fig, figs / f"training_{kind}.png", f"Training curves - {LABEL[kind]}",
+                   "Loss = scaled error of 20-step open-loop rollouts (position, velocity, "
+                   "attitude, body rates). Dashed = training loss, solid = validation loss "
+                   "per seed; star = epoch whose weights are kept. Left: trained on all "
+                   "flights, right: only flights <= 1.5 m/s (validated on slow flights too, "
+                   "so the levels are not comparable). Grey: horizon grows from 5 to 20 "
+                   "steps, loss values there are not comparable.", dpi=120)
     plt.close(fig)
 
 
@@ -371,11 +385,14 @@ def main() -> None:
         ax.grid(alpha=0.3, which="both")
     axes[0].set_ylabel("position error [cm]")
     axes[-1].legend(fontsize=7)
-    fig.suptitle("Open-loop position error over the horizon (median; band = IQR of the "
-                 "full-data models; dotted = trained on slow flights only; dashed line = "
-                 "0.42 s MPC horizon)", fontsize=10)
     fig.tight_layout()
-    fig.savefig(figs / "error_over_horizon.png", dpi=120)
+    save_captioned(fig, figs / "error_over_horizon.png", "Prediction error over the horizon",
+                   OPEN_LOOP +
+                   "Shown: position error after 1 step (21 ms) up to 2 s, median over test "
+                   "flights, both axes log scale. Solid = trained on all flights (band = "
+                   "interquartile range), dotted = trained only on flights <= 1.5 m/s; "
+                   "dashed vertical line = 0.42 s, the MPC horizon and training horizon.",
+                   dpi=120)
     plt.close(fig)
 
     # 2. error vs momentary speed and height (T1 + slow variant to show extrapolation)
@@ -401,9 +418,14 @@ def main() -> None:
         ax.set_ylabel(f"position error at {H_TXT[20]} [cm]")
         ax.grid(alpha=0.3, which="both")
     axes[0].legend(fontsize=7)
-    fig.suptitle("T1 rollouts grouped by the momentary condition (median over rollouts)")
     fig.tight_layout()
-    fig.savefig(figs / "error_vs_condition.png", dpi=120)
+    save_captioned(fig, figs / "error_vs_condition.png", "Error by flight condition (T1)",
+                   OPEN_LOOP +
+                   "Rollouts on the T1 test flights are grouped by the speed (left) and "
+                   "height (right) at their start. Shown: median position error after "
+                   "0.42 s per group, log scale. Dotted = trained only on flights <= 1.5 m/s "
+                   "(dashed line): right of it is speed extrapolation; low heights show the "
+                   "ground effect.", dpi=120)
     plt.close(fig)
 
     # 3. accuracy vs compute
@@ -421,7 +443,11 @@ def main() -> None:
         ax.grid(alpha=0.3, which="both")
         ax.legend()
         fig.tight_layout()
-        fig.savefig(figs / "accuracy_vs_compute.png", dpi=120)
+        save_captioned(fig, figs / "accuracy_vs_compute.png", "Accuracy vs. compute",
+                       "x: time to predict 512 command sequences of 20 steps at once (what a "
+                       "sampling MPC needs per control step), one CPU thread. y: median "
+                       "position error after 0.42 s on T1. Lower left is better; a control "
+                       "step at 48 Hz has 21 ms.", dpi=120)
         plt.close(fig)
 
     # 4. example rollouts
@@ -447,10 +473,14 @@ def main() -> None:
                 ax.set_xlabel("x [m]")
                 ax.legend(fontsize=7, loc="upper right")
             axes[0][0].set_ylabel("y [m]")
-            fig.suptitle(f"Open-loop predictions every 0.5 s along a T3 flight "
-                         f"({ex['name']}), seed-0 models")
             fig.tight_layout()
-            fig.savefig(figs / "example_rollouts.png", dpi=120)
+            save_captioned(
+                fig, figs / "example_rollouts.png", "Example predictions on a benchmark flight",
+                f"Flight {ex['name']} (LQI, figure-eight at 2 m/s, top view). Every 0.5 s a "
+                f"prediction starts from the true state (dot) and runs "
+                f"{float(ex['horizon_s']):.0f} s ahead with the recorded motor commands only. "
+                "Black = true path; a line that leaves it shows how the model drifts. Seed-0 "
+                "models, trained on all flights.", dpi=120)
             plt.close(fig)
 
     training_curves(root / "models", figs, "mlp")
