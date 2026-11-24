@@ -31,7 +31,7 @@ All data live in `data/surrogate/` (not in git). Every generated folder contains
 * Controller: tuned LQI + **dither** on the commanded wrench from t = 1 s: per channel (thrust, roll, pitch, yaw torque) 50 % multisine (4 frequencies in 0.3–6 Hz) + 50 % PRBS (hold 0.05–0.4 s), amplitude 10 % of hover thrust / maximum torque, seeded with `[seed, 31337]`.
 
 **Course flights** (`course_<controller>_<family>_<seed>.npz`)
-* Families hover, figure8, helix, waypoints (seed mod 4); controller PID, LQR, LQI in turn (⌊seed / 4⌋ mod 3) → every family × controller pair within 12 consecutive seeds.
+* Families hover, figure8, helix, waypoints (seed mod 4); controller PID and LQI in turn (⌊seed / 4⌋ mod 2) → every family × controller pair within 8 consecutive seeds. LQR is not re-tuned in the real world and not used.
 * Same shape generator as the control benchmark, but with the **variable** speed profile (v_max as above; hover is a take-off to 0.5–1.5 m).
 * Tuned gains from `projects/control/results/tuning_real/`, no dither.
 
@@ -42,7 +42,7 @@ Both kinds pass the feasibility check of the course generator (≤ 80 % thrust, 
 | Folder | Set | Source | Rules |
 |---|---|---|---|
 | – | **T2** speed extrapolation | no folder: models are additionally trained only on `train/` flights whose measured maximum speed is ≤ 1.5 m/s (`T2_MAX_SPEED`), and tested on the T1 flights above 1.5 m/s | selection by the *measured* speed of the whole flight, never by time step |
-| `T3_courses/` | **T3** benchmark courses | part A of the R1 benchmark (`projects/control/configs/benchmark/r1.yaml`, `--log-flights`): figure8, helix, waypoints, **gates** at constant 0.25–3 m/s + hover, test seeds 1000–1004, DSL-PID / PID / LQR / LQI | constant cruise speed, unseen family (gates), file `A_<ctrl>_<scenario>_<family>_<speed>_<seed>.npz` |
+| `T3_courses/` | **T3** benchmark courses | part A of the R1 benchmark (`projects/control/configs/benchmark/r1.yaml`, `--log-flights`): figure8, helix, waypoints, **gates** at constant 0.25–3 m/s + hover, test seeds 1000–1004, DSL-PID / PID / LQI | constant cruise speed, unseen family (gates), file `A_<ctrl>_<scenario>_<family>_<speed>_<seed>.npz` |
 | `T4_disturbances/` | **T4** unknown conditions | part B of the same benchmark: 20 scenarios (mass, wind, gusts, motor lag 50 / 100 ms, sensor noise, combinations) on hover, figure8, gates at 1 m/s | the model has never seen disturbances; `B_*_ideal_*` flights are in another world and are not part of T4 |
 | `T5_controllers/` | **T5** other controllers | later: flights of INDI and the learned controller | same courses as T3 |
 

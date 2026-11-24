@@ -9,6 +9,7 @@ import yaml
 from dronelab.core.tasks import TUNE_FAMILIES, make_course
 from dronelab.core.tasks.courses import CourseLimits
 from dronelab.surrogate.datasets import (
+    COURSE_CONTROLLERS,
     SplitConfig,
     course_assignment,
     max_speed,
@@ -103,10 +104,11 @@ def test_dither():
     assert not np.allclose(runs[0], [other.act(s, ref) for _ in range(150)])
 
 
-# Every family is flown by every controller within 12 consecutive seeds.
+# Every family is flown by every controller within 4 x (number of controllers) seeds.
 def test_course_assignment_balanced():
-    combos = {course_assignment(s) for s in range(20300, 20312)}
-    assert len(combos) == len(TUNE_FAMILIES) * 3
+    n = len(TUNE_FAMILIES) * len(COURSE_CONTROLLERS)
+    combos = {course_assignment(s) for s in range(20300, 20300 + n)}
+    assert len(combos) == n
 
 
 # The seed ranges of the configured splits never overlap (no leakage between splits).

@@ -1,0 +1,9 @@
+mlp_w4: 583 train / 98 val flights
+  epoch  0  train    19.391  val     6.564  (8 s)
+  epoch  1  train     0.782  val     1.641  (20 s)
+  epoch  2  train     0.832  val     1.044  (40 s)
+  epoch  3  train     0.850  val     0.766  (64 s)
+  epoch  4  train     0.674  val     0.563  (89 s)
+  epoch  5  train     0.613  val     0.442  (115 s)
+  epoch  6  train     0.469  val     0.406  (140 s)
+  epoch  7  train     0.431  val     0.389  (164 s)

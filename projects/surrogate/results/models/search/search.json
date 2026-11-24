@@ -1,0 +1,14 @@
+{
+ "val_loss": {
+  "phys_mlp_w1": 0.109,
+  "phys_mlp_w4": 0.096,
+  "phys_mlp_w8": 0.127,
+  "mlp_w1": 11.212,
+  "mlp_w4": 0.389,
+  "mlp_w8": 0.414
+ },
+ "best_window": {
+  "phys+mlp": 4,
+  "mlp": 4
+ }
+}

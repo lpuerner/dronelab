@@ -1,0 +1,33 @@
+# Surrogate training (stage S2). Splits: projects/surrogate/DATASETS.md.
+data_dir: data/surrogate
+out_dir: projects/surrogate/results/models
+processes: 2                 # trainings in parallel, 1 torch thread each
+
+train:                       # dronelab.surrogate.train.TrainConfig
+  warmup: 8                  # steps that fill the window / settle the motor model
+  horizon: 20                # loss over 20 steps = 0.42 s (MPC horizon)
+  horizon_start: 5
+  ramp_epochs: 3
+  stride: 2
+  batch: 512
+  lr: 1.0e-3
+  lr_phys: 3.0e-3
+  epochs: 20
+  steps_per_epoch: 150
+  patience: 5
+  val_segments: 3000
+
+phys:                        # the 5 physics parameters converge fast
+  epochs: 10
+  steps_per_epoch: 100
+
+net: {hidden: 128, layers: 2}
+
+search:                      # history window, chosen on the validation loss (seed 0, full data)
+  windows: [1, 4, 8]
+  epochs: 8
+
+seeds: [0, 1, 2]
+variants:                    # "slow" = T2 setting: only flights with measured max speed <= 1.5 m/s
+  full: null
+  slow: 1.5

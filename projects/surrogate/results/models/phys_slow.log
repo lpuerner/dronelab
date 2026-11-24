@@ -1,0 +1,11 @@
+phys_slow: 179 train / 26 val flights
+  epoch  0  train     5.650  val   166.268  (17 s)
+  epoch  1  train    21.055  val   158.814  (45 s)
+  epoch  2  train    66.070  val   154.508  (91 s)
+  epoch  3  train   166.865  val   151.710  (166 s)
+  epoch  4  train   164.969  val   150.501  (233 s)
+  epoch  5  train   164.551  val   149.775  (287 s)
+  epoch  6  train   163.921  val   149.333  (344 s)
+  epoch  7  train   163.285  val   149.073  (410 s)
+  epoch  8  train   162.495  val   148.996  (478 s)
+  epoch  9  train   162.890  val   148.978  (545 s)

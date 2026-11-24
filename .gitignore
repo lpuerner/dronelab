@@ -13,3 +13,4 @@ projects/*/results/logs/
 projects/*/results/tuning*/*/study.db
 data/
 .idea/
+projects/surrogate/results/eval/

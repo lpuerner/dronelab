@@ -7,7 +7,7 @@ range:
 * ``excitation``: tuned LQI on a random excitation path (variable speed, low passes for the
   ground effect) plus a dither signal on the commanded wrench,
 * ``courses``: the tuning families (hover, figure8, helix, waypoints) with a *variable*
-  speed profile, flown in turn by the tuned PID, LQR and LQI, without dither.
+  speed profile, flown in turn by the tuned PID and LQI, without dither.
 
 T3 / T4 come from the control benchmark (``projects/control/configs/benchmark/r1.yaml``),
 T2 is a selection of train / T1 by maximum speed, not a folder of its own.
@@ -23,7 +23,7 @@ import numpy as np
 from dronelab.core.eval.parallel import EpisodeSpec
 from dronelab.core.tasks import TUNE_FAMILIES
 
-COURSE_CONTROLLERS = ("pid", "lqr", "lqi")
+COURSE_CONTROLLERS = ("pid", "lqi")  # LQR is not re-tuned in the real world
 EXCITATION_CONTROLLER = "lqi"
 SPLIT_DIRS = {
     "train": "train",
