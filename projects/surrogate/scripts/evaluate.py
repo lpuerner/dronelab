@@ -6,6 +6,8 @@ Writes ``<results>/eval/<model>__<set>.npz`` (one row per rollout, see
 dronelab.surrogate.evaluate), ``flights_<set>.json`` (name, measured max speed, controller,
 scenario, family per flight) and ``timing.json`` (batch of 512 x 20 steps per model kind).
 T2 is not evaluated separately: it is the subset of T1 flights faster than T2_MAX_SPEED.
+``--dob`` adds the disturbance estimated from the warm-up steps to every prediction and
+writes to ``eval_dob/`` (sets T1 and T4 by default).
 """
 
 from __future__ import annotations
@@ -36,13 +38,13 @@ def _flights(data_dir: Path, s: str):
 
 
 def _job(args) -> str:
-    model_path, s, data_dir, out = args
+    model_path, s, data_dir, out, dob = args
     torch.set_num_threads(1)
     dst = out / f"{model_path.stem}__{s}.npz"
     if dst.exists():
         return f"{dst.name} (exists)"
     model, _ = load_model(model_path)
-    res = evaluate(model, _flights(data_dir, s))
+    res = evaluate(model, _flights(data_dir, s), dob=dob)
     np.savez_compressed(dst, **res)
     return f"{dst.name}: {len(res['e_pos'])} rollouts, {res['skipped']} short flights skipped"
 
@@ -71,10 +73,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", default="projects/surrogate/results/models")
     ap.add_argument("--data", default="data/surrogate")
-    ap.add_argument("--out", default="projects/surrogate/results/eval")
-    ap.add_argument("--sets", nargs="+", default=list(TEST_SETS))
+    ap.add_argument("--out", default=None, help="default: results/eval or results/eval_dob")
+    ap.add_argument("--sets", nargs="+", default=None)
+    ap.add_argument("--dob", action="store_true", help="with disturbance estimation")
     ap.add_argument("--processes", type=int, default=2)
     args = ap.parse_args()
+    args.out = args.out or f"projects/surrogate/results/{'eval_dob' if args.dob else 'eval'}"
+    args.sets = args.sets or (['T1', 'T4'] if args.dob else list(TEST_SETS))
     out, data_dir = Path(args.out), Path(args.data)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -88,10 +93,12 @@ def main() -> None:
         (out / f"flights_{s}.json").write_text(json.dumps(info))
 
     models = sorted(Path(args.models).glob("*.pt"))
-    jobs = [(m, s, data_dir, out) for m in models for s in args.sets]
+    jobs = [(m, s, data_dir, out, args.dob) for m in models for s in args.sets]
     with Pool(args.processes) as pool:
         for msg in pool.imap_unordered(_job, jobs):
             print(msg, flush=True)
+    if args.dob:
+        return
 
     torch.set_num_threads(1)
     _examples(Path(args.models), data_dir, out)

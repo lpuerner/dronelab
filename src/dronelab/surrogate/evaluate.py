@@ -21,8 +21,30 @@ EVERY = 12  # steps between start points (0.25 s)
 
 
 @torch.no_grad()
-def evaluate(model: Surrogate, flights: list[Flight], batch: int = 2048) -> dict:
-    """Per-rollout errors; flights shorter than warmup + 2 s are skipped (counted)."""
+def estimate_disturbance(model: Surrogate, pos, vel, rot, omega, u, warmup: int, n: int = 4):
+    """Constant extra acceleration (world) and angular acceleration (body) that explain the
+    one-step prediction errors of the last ``n`` known steps before ``warmup``.
+
+    Same idea as the integrator of LQI ("offset-free" MPC): what the model systematically
+    misses right now - wind, payload - is assumed to stay for the prediction horizon.
+    """
+    acc, alpha = 0, 0
+    for k in range(warmup - n, warmup):
+        _, v, r, w = model.rollout(pos[:, :k + 2], vel[:, :k + 2], rot[:, :k + 2],
+                                   omega[:, :k + 2], u[:, :k + 1], k, 1)
+        acc = acc + (vel[:, k + 1] - v[:, 0]) / DT
+        dw = omega[:, k + 1] - w[:, 0]  # body rates, frame difference negligible over 1 step
+        alpha = alpha + dw / DT
+    return acc / n, alpha / n
+
+
+@torch.no_grad()
+def evaluate(model: Surrogate, flights: list[Flight], batch: int = 2048,
+             dob: bool = False) -> dict:
+    """Per-rollout errors; flights shorter than warmup + 2 s are skipped (counted).
+
+    ``dob``: add the disturbance estimated from the warm-up steps to every prediction.
+    """
     model.eval()
     hmax = HORIZONS[-1]
     length = WARMUP + hmax + 1
@@ -37,8 +59,10 @@ def evaluate(model: Surrogate, flights: list[Flight], batch: int = 2048) -> dict
         seg = make_segments([f], length, EVERY)
         for i in range(0, len(seg), batch):
             s = seg[slice(i, i + batch)]
+            dist = (estimate_disturbance(model, s.pos, s.vel, s.rot, s.omega, s.u, WARMUP)
+                    if dob else None)
             p, v, r, w = model.rollout(s.pos, s.vel, s.rot, s.omega, s.u[:, :WARMUP + hmax],
-                                       WARMUP, hmax)
+                                       WARMUP, hmax, dist)
             sl = slice(WARMUP + 1, WARMUP + hmax + 1)
             e_pos = (p - s.pos[:, sl]).norm(dim=-1)[:, hi - 1]
             e_vel = (v - s.vel[:, sl]).norm(dim=-1)[:, hi - 1]

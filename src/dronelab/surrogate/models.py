@@ -184,7 +184,16 @@ class Surrogate(nn.Module):
             self.out_scale.copy_(torch.cat([dv_b, dw], -1).reshape(-1, 6).std(0).clamp_min(1e-4))
 
     # ---------------------------------------------------------------- dynamics
-    def _step(self, pos, vel, rot, omega, m, u, win):
+    def _step(self, pos, vel, rot, omega, m, u, win, dist=None):
+        pos1, vel1, rot1, omega1, m1 = self._model_step(pos, vel, rot, omega, m, u, win)
+        if dist is not None:  # constant extra acceleration (world) / angular acc. (body)
+            acc, alpha = dist
+            pos1 = pos1 + 0.5 * DT * DT * acc
+            vel1 = vel1 + DT * acc
+            omega1 = omega1 + DT * alpha
+        return pos1, vel1, rot1, omega1, m1
+
+    def _model_step(self, pos, vel, rot, omega, m, u, win):
         if self.kind == "mlp":
             out = self.net(win) * self.out_scale
             vel1 = vel + (rot @ out[..., :3, None])[..., 0]
@@ -199,14 +208,15 @@ class Surrogate(nn.Module):
             f_res, t_res = out[..., :3], out[..., 3:]
         return (*self.phys.step(pos, vel, rot, omega, m1, f_res, t_res), m1)
 
-    def rollout(self, pos, vel, rot, omega, u, warmup: int, horizon: int):
+    def rollout(self, pos, vel, rot, omega, u, warmup: int, horizon: int, dist=None):
         """Open-loop prediction from recorded commands.
 
         ``pos, vel, rot, omega``: true states of shape (B, >= warmup + 1, ...); the first
         ``warmup`` steps only fill the feature window and settle the motor model, the
         prediction starts from the true state at index ``warmup``. ``u``: commanded rpm
         (B, warmup + horizon, 4). Returns predicted (pos, vel, rot, omega) for the indices
-        ``warmup + 1 ... warmup + horizon``, each (B, horizon, ...).
+        ``warmup + 1 ... warmup + horizon``, each (B, horizon, ...). ``dist``: optional
+        (acc (B, 3) world frame, alpha (B, 3) body frame) added in every predicted step.
         """
         if self.net is not None and warmup < self.window - 1:
             raise ValueError("warmup must be >= window - 1")
@@ -228,9 +238,24 @@ class Surrogate(nn.Module):
                 feats.append(self._features(*x, uk, m))
                 feats = feats[-self.window:]
                 win = torch.cat(feats, -1)
-            *x, m = self._step(*x, m, uk, win)
+            *x, m = self._step(*x, m, uk, win, dist)
             out.append(x)
         return tuple(torch.stack([o[i] for o in out], 1) for i in range(4))
+
+
+URDF_DRAG = (9.1785e-7, 10.311e-7)  # cf2x.urdf drag_coeff_xy, drag_coeff_z
+
+
+def urdf_physics(tau: float = 0.02) -> Surrogate:
+    """Physics with the data-sheet values (cf2x.urdf) and an assumed motor lag, not fitted.
+
+    The baseline a model-based controller would use without flight data.
+    """
+    model = Surrogate("phys")
+    with torch.no_grad():  # k_F, k_M are the URDF values already (log factor 0)
+        model.phys.kd.copy_(torch.tensor(URDF_DRAG) / 1e-6)
+        model.phys.log_tau.fill_(math.log(tau))
+    return model.eval()
 
 
 def save_model(model: Surrogate, path, extra: dict | None = None) -> None:

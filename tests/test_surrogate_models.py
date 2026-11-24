@@ -103,3 +103,30 @@ def test_physics_matches_pybullet(tmp_path):
     assert float(dv.mean()) < 0.05 * float(true_dv.mean()) + 1e-4
     assert float(dw.mean()) < 0.01
     assert np.isfinite(float(rot_angle(r, f.rot[11:]).max()))
+
+
+# A constant extra force/torque (like wind) is recovered from the warm-up steps, and the
+# prediction with the estimate follows the disturbed flight.
+def test_disturbance_estimate():
+    from dronelab.surrogate.evaluate import estimate_disturbance
+    from dronelab.surrogate.models import urdf_physics
+
+    m = urdf_physics()
+    g = torch.Generator().manual_seed(1)
+    n, steps = 3, 30
+    u = CF2X.hover_rpm * (1 + 0.02 * torch.randn(n, steps, 4, generator=g))
+    pos0 = torch.tensor([0.0, 0.0, 1.0]).expand(n, 1, 3)
+    z = torch.zeros(n, 1, 3)
+    eye = torch.eye(3).expand(n, 1, 3, 3)
+    dist = (torch.tensor([[0.5, -0.3, 0.2]]).expand(n, 3),
+            torch.tensor([[2.0, -1.0, 0.5]]).expand(n, 3))
+    with torch.no_grad():
+        x = m.rollout(pos0, z, eye, z, u, 0, steps - 1, dist)  # "true" disturbed flight
+    pos, vel, rot, omega = (torch.cat([a, b], 1) for a, b in zip((pos0, z, eye, z), x, strict=True))
+    acc, alpha = estimate_disturbance(m, pos, vel, rot, omega, u, warmup=8)
+    assert torch.allclose(acc, dist[0], atol=1e-3) and torch.allclose(alpha, dist[1], atol=1e-2)
+    with torch.no_grad():
+        p_est = m.rollout(pos, vel, rot, omega, u, 8, 20, (acc, alpha))[0]
+        p_none = m.rollout(pos, vel, rot, omega, u, 8, 20)[0]
+    err = lambda p: float((p - pos[:, 9:29]).norm(dim=-1).max())  # noqa: E731
+    assert err(p_est) < 1e-3 < err(p_none)

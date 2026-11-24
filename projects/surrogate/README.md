@@ -27,6 +27,7 @@ The physics prior below only knows the standard model, so it has a real model ga
 | Model | Physics | Network |
 |---|---|---|
 | `phys` | Rigid body. Mass and inertia from the URDF (weighed). Thrust k_F·Ω² and torque k_M·Ω², linear rotor drag ∝ ΣΩ·v (separate xy/z coefficients), first-order motor lag. **Learnable:** k_F, k_M, k_D,xy, k_D,z, τ. 5 physics substeps per control step. | – |
+| `phys (URDF)` | as `phys`, but **not fitted**: k_F, k_M and rotor drag from `cf2x.urdf`, assumed τ = 20 ms – the data-sheet model a controller designer would use without flight data, and the physics baseline for R4 | – |
 | `phys+mlp` | as `phys`, starts from the fitted `phys` | MLP 2 × 128 predicts a residual force and torque in the body frame from a window of the last k states and commands |
 | `mlp` | – | MLP 2 × 128 predicts Δv (body) and Δω from the same window |
 
@@ -63,12 +64,12 @@ The ground effect is deliberately *not* in the prior.
 
 Median position error [cm] / attitude error [°] at the MPC horizon (0.42 s), full training data:
 
-| Test set | `phys` | `phys+mlp` | `mlp` |
-|---|---|---|---|
-| T1 in distribution | 10.1 / 28.6 | **0.11 / 0.2** | 0.26 / 0.4 |
-| T2 faster than 1.5 m/s | 11.0 / 32.8 | **0.12 / 0.2** | 0.29 / 0.5 |
-| T3 benchmark courses | 12.6 / 46.8 | **0.12 / 0.3** | 0.45 / 0.6 |
-| T4 disturbances | 13.4 / 43.0 | 7.9 / 3.0 | 7.8 / 3.0 |
+| Test set | `phys (URDF)` | `phys` | `phys+mlp` | `mlp` |
+|---|---|---|---|---|
+| T1 in distribution | 8.3 / 8.0 | 10.1 / 28.6 | **0.11 / 0.2** | 0.26 / 0.4 |
+| T2 faster than 1.5 m/s | 9.7 / 9.2 | 11.0 / 32.8 | **0.12 / 0.2** | 0.29 / 0.5 |
+| T3 benchmark courses | 13.5 / 13.1 | 12.6 / 46.8 | **0.12 / 0.3** | 0.45 / 0.6 |
+| T4 disturbances | 15.4 / 12.2 | 13.4 / 43.0 | 7.9 / 3.0 | 7.8 / 3.0 |
 
 The seed spread of the network medians is ≤ 0.01 cm at 0.42 s. All horizons, velocity errors, IQRs and the per-scenario tables are in the [full report](results/report.md).
 
@@ -98,7 +99,7 @@ The seed spread of the network medians is ≤ 0.01 cm at 0.42 s. All horizons, v
 
 **Fitted alone, `phys` lowers its thrust by 9 %.** Under the multi-step loss this is a compromise against the unmodelled pitch-up: less thrust means a tilted prediction drifts less sideways. The side effect is a constant downward error of about 0.9 m/s². This explains the uniform 2 cm error at 0.21 s on all test sets, and why `phys` looks *better* than the networks at 20–30 % extra mass (T4).
 
-The `phys` baseline is therefore the best this prior can do under this loss, not the simulator's own parameters. With the true parameters it would still tilt by about 30° after 0.42 s.
+The data-sheet model `phys (URDF)`, with the simulator's own parameters, avoids this bias: it tilts much less (8° instead of 29° on T1 at 0.42 s) and is more accurate on T1/T2 (8.3 against 10.1 cm), but slightly less accurate on the benchmark courses and under disturbances (13.5 / 15.4 against 12.6 / 13.4 cm). Neither is usable open-loop beyond a few tenths of a second; both lack the same effects. R4 uses `phys (URDF)` as its physics baseline, because it needs no flight data.
 
 ### 3. Extrapolation to higher speed: the physics prior helps only partly
 
@@ -141,9 +142,33 @@ On T4 both networks fall to about 8 cm at 0.42 s and are equal: the hybrid is be
 * **Longer motor lag** (50/100 ms) costs surprisingly little: 1.3–1.8 cm.
 * **Sensor noise:** the noise scenarios match nominal, because the logs hold the true states.
 
-For model-based control this means the model needs online adaptation or an integral or disturbance estimate (R4), not more training data.
+For model-based control this means the model needs online adaptation or an integral or disturbance estimate, not more training data – see the next section.
 
-### 6. Compute
+### 6. Disturbance estimation removes most of the wind and payload error
+
+Before every prediction, a constant extra acceleration (world frame) and angular acceleration (body frame) is estimated from the one-step errors of the last 4 known steps (83 ms) and kept over the horizon. This is the idea of the LQI integrator, known as *offset-free* MPC; it needs no training and works with every model (`estimate_disturbance` in `src/dronelab/surrogate/evaluate.py`).
+
+Median position error [cm] at 0.42 s, without → with the estimate:
+
+| condition | `phys (URDF)` | `phys+mlp` | `mlp` |
+|---|---|---|---|
+| T1, no disturbance | 8.3 → 2.5 | 0.11 → 0.16 | 0.26 → 0.56 |
+| wind 0.09 N | 28.2 → 2.4 | 24.4 → **0.20** | 24.0 → 0.36 |
+| mass ×1.3 | 28.4 → 3.5 | 21.9 → **1.6** | 21.7 → 1.7 |
+| gusts 0.04 N | 21.1 → 11.8 | 14.8 → 10.6 | 14.6 → 10.7 |
+| motor lag 50 ms | 13.4 → 5.6 | 1.8 → 4.3 | 1.8 → 4.4 |
+| strong combination | 49.3 → 66.3 | 49.9 → 60.2 | 47.1 → 55.2 |
+
+* **Constant disturbances are nearly solved:** under the strongest wind the hybrid drops from 24 cm to 0.2 cm, close to its 0.1 cm without wind. Payload errors fall by a factor of 10–15.
+* **The physics model profits most** (8 → 2.5 cm even without disturbance): the estimate also absorbs its *systematic* error, the flapping moment, as long as it changes slowly.
+* **It hurts where the error is not constant:** gusts change faster than the 83 ms window, and with a longer motor lag the error comes from the dynamics, not from an outside force – the estimate then extrapolates a transient. On undisturbed flights the networks get slightly worse (0.11 → 0.16 cm), because they mistake their own small errors for a force.
+* **Caveat:** the estimate uses the true states of the logs. In closed loop it sees noisy states, so it will need a longer window or filtering there.
+
+For R4 this means: the MPC gets the same estimator, the hybrid with estimate is the strongest model, and the comparison `phys (URDF)` + estimate against `phys+mlp` + estimate shows what the learned residual adds beyond a plain disturbance observer.
+
+![disturbance estimation](results/figures/disturbance_estimation.png)
+
+### 7. Compute
 
 | model | parameters | rollout 512 × 20 steps (1 thread) | training per seed |
 |---|---|---|---|
@@ -167,7 +192,7 @@ At 48 Hz a control step has 21 ms, so neither model is real-time for MPPI with 5
 * **Short training budget.** It was fitted to the 2-core CPU: 20 epochs, no tuning of width or learning rate, only the window was searched. Longer training would probably lower the network errors further: the validation loss of the MLP still falls at the last epoch, and the best state is always one of the last two epochs (figure below). It would not change the ranking: the seed spread is tiny.
 
   ![MLP training curves](results/figures/training_mlp.png)
-* **`phys` was fitted with the same multi-step loss** as the networks, which biases its thrust (see 2). A one-step fit would give more physical parameters but no better rollouts.
+* **`phys` was fitted with the same multi-step loss** as the networks, which biases its thrust (see 2). The unfitted `phys (URDF)` is the fairer physics baseline.
 * **Not done yet:** the GRU variants and T5 (flights of INDI and the RL controller).
 
 ## Reproduce
@@ -177,11 +202,12 @@ python projects/surrogate/scripts/generate_data.py --processes 2      # train, v
 python projects/control/scripts/benchmark.py --config projects/control/configs/benchmark/r1.yaml --log-flights --processes 2   # T3, T4 (~25 min)
 python projects/surrogate/scripts/train.py        # phys, window search, 2 nets x 2 variants x 3 seeds (~2.5 h, resumable)
 python projects/surrogate/scripts/evaluate.py     # open-loop rollouts on T1, T3, T4 (~50 min, resumable)
+python projects/surrogate/scripts/evaluate.py --dob   # with disturbance estimation, T1 and T4 (~55 min)
 python projects/surrogate/scripts/analyze.py      # results/report.md + figures
 ```
 
 * The configuration is in [configs/train.yaml](configs/train.yaml).
 * Trained models (`.pt`, with their config and training history as `.json`) are in `results/models/`.
-* The per-rollout evaluation files (`results/eval/`, ~60 MB) are not committed; `evaluate.py` regenerates them.
+* The per-rollout evaluation files (`results/eval/`, `results/eval_dob/`, together ~100 MB) are not committed; `evaluate.py` regenerates them.
 
 References: see the [main README](../../README.md#references) – [2] NeuroBEM.

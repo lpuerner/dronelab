@@ -14,3 +14,5 @@ projects/*/results/tuning*/*/study.db
 data/
 .idea/
 projects/surrogate/results/eval/
+projects/surrogate/results/eval_dob/
+logs/

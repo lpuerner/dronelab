@@ -26,7 +26,7 @@ import yaml
 
 from dronelab.surrogate.data import load_split
 from dronelab.surrogate.datasets import SPLIT_DIRS
-from dronelab.surrogate.models import Surrogate, load_model, save_model
+from dronelab.surrogate.models import Surrogate, load_model, save_model, urdf_physics
 from dronelab.surrogate.train import TrainConfig, train
 
 
@@ -91,6 +91,7 @@ def main() -> None:
     nproc = cfg["processes"]
 
     if "phys" in args.stage:
+        save_model(urdf_physics(), out / "phys_urdf.pt", {"info": {"name": "phys_urdf"}})
         jobs = [dict(cfg=cfg, name=f"phys_{v}", kind="phys", window=1, variant=v, seed=0)
                 for v in cfg["variants"]]
         for info in _run(jobs, nproc):

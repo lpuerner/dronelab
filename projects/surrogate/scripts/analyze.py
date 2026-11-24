@@ -25,9 +25,10 @@ from scipy.stats import wilcoxon  # noqa: E402
 from dronelab.surrogate.datasets import T2_MAX_SPEED  # noqa: E402
 from dronelab.surrogate.evaluate import HORIZONS  # noqa: E402
 
-KINDS = ("phys", "phys_mlp", "mlp")
-LABEL = {"phys": "phys", "phys_mlp": "phys+mlp", "mlp": "mlp"}
-COLOR = {"phys": "#7f7f7f", "phys_mlp": "#1f77b4", "mlp": "#d62728"}
+KINDS = ("phys_urdf", "phys", "phys_mlp", "mlp")
+LABEL = {"phys_urdf": "phys (URDF)", "phys": "phys", "phys_mlp": "phys+mlp", "mlp": "mlp"}
+COLOR = {"phys_urdf": "#9467bd", "phys": "#7f7f7f", "phys_mlp": "#1f77b4", "mlp": "#d62728"}
+TIMING_KEY = {"phys_urdf": "phys", "phys": "phys", "phys_mlp": "phys+mlp", "mlp": "mlp"}
 SET_DESC = {"T1": "in distribution: new flights like training",
             "T2": "speed extrapolation: T1 flights > 1.5 m/s",
             "T3": "benchmark courses, incl. unseen DSL-PID",
@@ -42,10 +43,10 @@ Z_BINS = [0, 0.3, 0.5, 1.0, 1.5, 3.0]
 
 
 def _parse(stem: str):
-    """'phys_mlp_full_s1__T3' -> (kind, variant, seed, set)."""
+    """'phys_mlp_full_s1__T3' -> (kind, variant, seed, set); 'phys_urdf' counts as full."""
     model, s = stem.split("__")
-    m = re.match(r"(phys_mlp|phys|mlp)_(full|slow)(?:_s(\d+))?$", model)
-    return m.group(1), m.group(2), int(m.group(3) or 0), s
+    m = re.match(r"(phys_urdf|phys_mlp|phys|mlp)(?:_(full|slow))?(?:_s(\d+))?$", model)
+    return m.group(1), m.group(2) or "full", int(m.group(3) or 0), s
 
 
 def load(eval_dir: Path):
@@ -92,6 +93,62 @@ def subsets(flights: dict) -> dict[str, tuple[str, np.ndarray | None]]:
 
 def fmt(med, q1, q3, scale=1.0, d=1):
     return f"{med * scale:.{d}f} [{q1 * scale:.{d}f}–{q3 * scale:.{d}f}]"
+
+
+def disturbance_section(root: Path, figs: Path, res: dict, flights: dict, md: list) -> None:
+    """Errors without / with the disturbance estimate (eval_dob/) on T1 and per T4 scenario."""
+    if not (root / "eval_dob").exists():
+        return
+    dob, _ = load(root / "eval_dob")
+    kinds = [k for k in KINDS if (k, "full", "T4") in dob and (k, "full", "T4") in res]
+    if not kinds or "T4" not in flights:
+        return
+
+    def med(d, k, s, sel=None):
+        ids, e, _ = flight_errors(d[(k, "full", s)], "e_pos")
+        if sel is not None:
+            e = e[sel[ids]]
+        return np.median(e[:, H_MAIN]) * 100 if len(e) else np.nan
+
+    scen = np.array([f["scenario"] for f in flights["T4"]])
+    rows = [("T1 (no disturbance)", "T1", None)] + [
+        (f"T4 {sc}", "T4", scen == sc) for sc in dict.fromkeys(scen)]
+    md.append("\n## Disturbance estimation (offset-free prediction)\n")
+    md.append("Before every prediction, a constant extra acceleration and angular acceleration "
+              "is estimated from the one-step errors of the last 4 known steps (83 ms) and kept "
+              "over the horizon - the idea of the LQI integrator, used by offset-free MPC. "
+              f"Median position error [cm] at {H_TXT[20]}, without → with the estimate "
+              "(full training data).\n")
+    md.append("| set | " + " | ".join(LABEL[k] for k in kinds) + " |")
+    md.append("|---|" + "---|" * len(kinds))
+    plot = {k: ([], []) for k in kinds}
+    for name, s, sel in rows:
+        if (kinds[0], "full", s) not in dob:
+            continue
+        cells = []
+        for k in kinds:
+            a, b = med(res, k, s, sel), med(dob, k, s, sel)
+            cells.append(f"{a:.2f} → **{b:.2f}**")
+            plot[k][0].append(a)
+            plot[k][1].append(b)
+        md.append(f"| {name} | " + " | ".join(cells) + " |")
+    labels = [n.replace("T4 ", "") for n, s, _ in rows if (kinds[0], "full", s) in dob]
+    fig, ax = plt.subplots(figsize=(12, 4))
+    x = np.arange(len(labels))
+    w = 0.8 / len(kinds)
+    for i, k in enumerate(kinds):
+        xi = x - 0.4 + w * (i + 0.5)
+        ax.bar(xi, plot[k][0], w, color=COLOR[k], alpha=0.3)
+        ax.bar(xi, plot[k][1], w * 0.6, color=COLOR[k], label=LABEL[k])
+    ax.set_xticks(x, labels, rotation=45, ha="right", fontsize=8)
+    ax.set_yscale("log")
+    ax.set_ylabel(f"position error at {H_TXT[20]} [cm]")
+    ax.set_title("Disturbance estimation: pale = without, solid = with the estimate (median)")
+    ax.grid(alpha=0.3, axis="y", which="both")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(figs / "disturbance_estimation.png", dpi=120)
+    plt.close(fig)
 
 
 def training_curves(models_dir: Path, figs: Path, kind: str) -> None:
@@ -184,7 +241,7 @@ def main() -> None:
     md.append("| model | training data | " + " | ".join(sets) + " |")
     md.append("|---|---|" + "---|" * len(sets))
     for k in KINDS:
-        for var in ("full", "slow"):
+        for var in ("full",) if k == "phys_urdf" else ("full", "slow"):
             row = []
             for s in sets:
                 g = get(k, var, s)
@@ -197,7 +254,8 @@ def main() -> None:
     md.append("| set | comparison | data | flights where A is better | median ratio A/B | p |")
     md.append("|---|---|---|---|---|---|")
     for s in sets:
-        for a, b in (("phys_mlp", "mlp"), ("phys_mlp", "phys"), ("mlp", "phys")):
+        for a, b in (("phys_mlp", "mlp"), ("phys_mlp", "phys_urdf"), ("phys_mlp", "phys"),
+                     ("mlp", "phys_urdf"), ("phys", "phys_urdf")):
             for var in ("full", "slow"):
                 ga, gb = get(a, var, s), get(b, var, s)
                 if ga is None or gb is None or len(ga[0]) < 5:
@@ -273,7 +331,7 @@ def main() -> None:
         md.append("| model | parameters | rollout 512 × 20 [ms] | training [min] | epochs |")
         md.append("|---|---|---|---|---|")
         for k in KINDS:
-            t = timing.get(LABEL[k])
+            t = timing.get(TIMING_KEY[k])
             infos = [json.loads(p.read_text()) for p in models_dir.glob(f"{k}_full*.json")]
             if k == "phys":
                 infos = [i for i in infos if i["kind"] == "phys"]
@@ -353,9 +411,9 @@ def main() -> None:
         fig, ax = plt.subplots(figsize=(5, 3.8))
         for k in KINDS:
             g = get(k, "full", "T1")
-            if g is None or LABEL[k] not in timing:
+            if g is None or TIMING_KEY[k] not in timing:
                 continue
-            ax.scatter(timing[LABEL[k]]["ms_512x20"], np.median(g[1][:, H_MAIN]) * 100,
+            ax.scatter(timing[TIMING_KEY[k]]["ms_512x20"], np.median(g[1][:, H_MAIN]) * 100,
                        color=COLOR[k], s=60, label=LABEL[k])
         ax.set_xlabel("rollout 512 × 20 steps [ms], 1 thread")
         ax.set_ylabel(f"T1 position error at {H_TXT[20]} [cm]")
@@ -396,10 +454,11 @@ def main() -> None:
             plt.close(fig)
 
     training_curves(root / "models", figs, "mlp")
+    disturbance_section(root, figs, res, flights, md)
 
     md.append("\n## Figures\n")
     for f in ("error_over_horizon", "error_vs_condition", "accuracy_vs_compute",
-              "example_rollouts", "training_mlp"):
+              "example_rollouts", "training_mlp", "disturbance_estimation"):
         if (figs / f"{f}.png").exists():
             md.append(f"![{f}](figures/{f}.png)\n")
     (root / "report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
