@@ -21,6 +21,7 @@ dependencies = [
     "pydantic>=2",
     "imageio",
     "optuna",
+    "numba",  # fast surrogate physics for MPPI rollouts (surrogate/fast.py)
     # Simulator: installed from GitHub, see README / CI
     # "gym-pybullet-drones @ git+https://github.com/utiasDSL/gym-pybullet-drones.git",
 ]

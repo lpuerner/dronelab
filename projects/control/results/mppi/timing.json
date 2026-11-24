@@ -1,0 +1,162 @@
+{
+ "timing": [
+  {
+   "model": "urdf",
+   "n_sub": 5,
+   "K": 128,
+   "ms": 6.6
+  },
+  {
+   "model": "urdf",
+   "n_sub": 5,
+   "K": 256,
+   "ms": 7.2
+  },
+  {
+   "model": "urdf",
+   "n_sub": 5,
+   "K": 512,
+   "ms": 8.7
+  },
+  {
+   "model": "urdf",
+   "n_sub": 3,
+   "K": 128,
+   "ms": 5.8
+  },
+  {
+   "model": "urdf",
+   "n_sub": 3,
+   "K": 256,
+   "ms": 6.5
+  },
+  {
+   "model": "urdf",
+   "n_sub": 3,
+   "K": 512,
+   "ms": 7.6
+  },
+  {
+   "model": "urdf",
+   "n_sub": 2,
+   "K": 128,
+   "ms": 5.8
+  },
+  {
+   "model": "urdf",
+   "n_sub": 2,
+   "K": 256,
+   "ms": 5.8
+  },
+  {
+   "model": "urdf",
+   "n_sub": 2,
+   "K": 512,
+   "ms": 7.5
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 5,
+   "K": 128,
+   "ms": 17.8
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 5,
+   "K": 256,
+   "ms": 23.8
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 5,
+   "K": 512,
+   "ms": 34.8
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 3,
+   "K": 128,
+   "ms": 17.6
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 3,
+   "K": 256,
+   "ms": 22.6
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 3,
+   "K": 512,
+   "ms": 76.8
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 2,
+   "K": 128,
+   "ms": 42.3
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 2,
+   "K": 256,
+   "ms": 42.5
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 2,
+   "K": 512,
+   "ms": 53.0
+  },
+  {
+   "model": "mlp_full_s0",
+   "n_sub": 0,
+   "K": 128,
+   "ms": 16.6
+  },
+  {
+   "model": "mlp_full_s0",
+   "n_sub": 0,
+   "K": 256,
+   "ms": 22.2
+  },
+  {
+   "model": "mlp_full_s0",
+   "n_sub": 0,
+   "K": 512,
+   "ms": 31.9
+  }
+ ],
+ "accuracy": [
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 5,
+   "e_pos_cm_median": 0.109
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 3,
+   "e_pos_cm_median": 0.178
+  },
+  {
+   "model": "phys_mlp_full_s0",
+   "n_sub": 2,
+   "e_pos_cm_median": 0.343
+  },
+  {
+   "model": "urdf",
+   "n_sub": 5,
+   "e_pos_cm_median": 8.26
+  },
+  {
+   "model": "urdf",
+   "n_sub": 3,
+   "e_pos_cm_median": 8.366
+  },
+  {
+   "model": "urdf",
+   "n_sub": 2,
+   "e_pos_cm_median": 8.498
+  }
+ ]
+}

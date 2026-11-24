@@ -32,6 +32,23 @@ def test_so3_exp_orthonormal():
     assert abs(float(rot_angle(R[2], torch.eye(3))) - float(phi[2].norm())) < 1e-5
 
 
+# The numba inference path (no_grad) gives the same physics step as the torch path.
+def test_fast_step_matches_torch():
+    pytest.importorskip("numba")
+    pos, vel, rot, omega, u = _batch(n=32, steps=1)
+    ph = Physics(n_sub=5)
+    with torch.no_grad():
+        ph.kd.copy_(torch.tensor([1.6, 2.9]))
+    res = (0.01 * torch.randn(32, 1, 3), 1e-4 * torch.randn(32, 1, 3))
+    for f_res, t_res in ((None, None), res):
+        ref = ph.step(pos, vel, rot, omega, u, f_res, t_res)  # grad enabled -> torch
+        with torch.no_grad():
+            fast = ph.step(pos, vel, rot, omega, u, f_res, t_res)
+        for a, b in zip(ref, fast, strict=True):
+            assert a.shape == b.shape
+            assert torch.allclose(a.detach(), b, atol=1e-5, rtol=1e-5)
+
+
 # Every model returns (B, H, ...) and is deterministic.
 @pytest.mark.parametrize("kind", ["phys", "phys+mlp", "mlp"])
 def test_rollout_shapes(kind):

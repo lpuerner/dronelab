@@ -20,33 +20,46 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import torch
 from torch import nn
 
 from dronelab.core.backends.base import DroneParams
 from dronelab.surrogate.data import CF2X, DT, Segments
 
+try:
+    from dronelab.surrogate.fast import step_kernel
+except ImportError:  # numba missing: torch path only (same results, slower inference)
+    step_kernel = None
+
 KINDS = ("phys", "phys+mlp", "mlp")
 N_STATE_FEAT = 10  # z, v_body(3), gravity direction in body frame(3), omega(3)
 RES_SCALE = (0.01, 1e-4)  # residual force [N] / torque [N m] per unit net output
 
 
+# hat(w) = w @ _HAT_GEN reshaped to 3 x 3 (one matmul instead of nine stacked selects)
+_HAT_GEN = torch.zeros(3, 9)
+for _i, _j, _k, _s in ((2, 0, 1, -1), (1, 0, 2, 1), (2, 1, 0, 1), (0, 1, 2, -1),
+                       (1, 2, 0, -1), (0, 2, 1, 1)):
+    _HAT_GEN[_i, 3 * _j + _k] = _s
+_EYE = torch.eye(3)
+
+
 def hat(w: torch.Tensor) -> torch.Tensor:
-    z = torch.zeros_like(w[..., 0])
-    return torch.stack([z, -w[..., 2], w[..., 1], w[..., 2], z, -w[..., 0],
-                        -w[..., 1], w[..., 0], z], -1).reshape(*w.shape, 3)
+    return (w @ _HAT_GEN.to(w.dtype)).reshape(*w.shape, 3)
 
 
 def so3_exp(phi: torch.Tensor) -> torch.Tensor:
-    """Rodrigues' formula, batched (..., 3) -> (..., 3, 3)."""
-    t2 = (phi * phi).sum(-1, keepdim=True)[..., None]
-    t = torch.sqrt(t2 + 1e-12)
-    small = t2 < 1e-8
-    a = torch.where(small, 1 - t2 / 6, torch.sin(t) / t)
-    b = torch.where(small, 0.5 - t2 / 24, (1 - torch.cos(t)) / (t2 + 1e-12))
+    """Rodrigues' formula, batched (..., 3) -> (..., 3, 3).
+
+    (1 - cos t) / t^2 is written as 0.5 * (sin(t/2) / (t/2))^2, which has no cancellation
+    at small angles, so no small-angle branch is needed (the rollout is overhead-bound).
+    """
+    t = torch.sqrt((phi * phi).sum(-1, keepdim=True)[..., None] + 1e-12)
+    a = torch.sin(t) / t
+    s = torch.sin(0.5 * t) / (0.5 * t)
     K = hat(phi)
-    eye = torch.eye(3, dtype=phi.dtype).expand_as(K)
-    return eye + a * K + b * (K @ K)
+    return _EYE.to(phi.dtype) + a * K + (0.5 * s * s) * (K @ K)
 
 
 def rot_error(r_hat: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
@@ -100,24 +113,24 @@ class Physics(nn.Module):
         return a * m + (1 - a) * u
 
     def step(self, pos, vel, rot, omega, rpm, f_res=None, t_res=None):
-        rpm2 = rpm * rpm
+        if step_kernel is not None and not torch.is_grad_enabled():
+            return self._step_fast(pos, vel, rot, omega, rpm, f_res, t_res)
         kf = self.kf0 * self.log_kf.exp()
         km = self.km0 * self.log_km.exp()
-        thrust = kf * rpm2.sum(-1, keepdim=True)
-        torque = torch.stack([
-            kf * (rpm2 * self.rotor_xy[:, 1]).sum(-1),
-            -kf * (rpm2 * self.rotor_xy[:, 0]).sum(-1),
-            km * (rpm2 * self.yaw_sign).sum(-1),
-        ], -1)
+        # rpm^2 -> (thrust, torque x, y, z) as one (4, 4) matrix; built on 4-element tensors
+        alloc = torch.stack([kf.expand(4), kf * self.rotor_xy[:, 1], -kf * self.rotor_xy[:, 0],
+                             km * self.yaw_sign], -1)
+        wrench = (rpm * rpm) @ alloc
+        ez = _EYE[2].to(rpm.dtype)
+        f_thrust = wrench[..., :1] * ez
+        torque = wrench[..., 1:]
         if t_res is not None:
             torque = torque + t_res
-        drag = 1e-6 * torch.cat([self.kd[:1], self.kd]) * (rpm.sum(-1, keepdim=True)
-                                                           * (2 * math.pi / 60))
-        zeros = torch.zeros_like(thrust)
-        f_thrust = torch.cat([zeros, zeros, thrust], -1)
         if f_res is not None:
             f_thrust = f_thrust + f_res
-        g = torch.stack([zeros[..., 0], zeros[..., 0], zeros[..., 0] + self.gravity], -1)
+        drag = (1e-6 * 2 * math.pi / 60) * torch.cat([self.kd[:1], self.kd]) * rpm.sum(
+            -1, keepdim=True)
+        g = self.gravity * ez
         h = DT / self.n_sub
         for _ in range(self.n_sub):
             v_b = (rot.transpose(-1, -2) @ vel[..., None])[..., 0]
@@ -129,6 +142,23 @@ class Physics(nn.Module):
             pos = pos + h * vel
             rot = rot @ so3_exp(h * omega)
         return pos, vel, rot, omega
+
+    def _step_fast(self, pos, vel, rot, omega, rpm, f_res, t_res):
+        """Same as :meth:`step` in one numba loop (inference only, see fast.py)."""
+        lead = pos.shape[:-1]
+
+        def flat(x):
+            return np.ascontiguousarray(x.reshape(-1, *x.shape[len(lead):]).numpy())
+
+        zeros = np.zeros((math.prod(lead), 3), np.float32)
+        p = self.identified()
+        out = step_kernel(
+            flat(pos), flat(vel), flat(rot), flat(omega), flat(rpm),
+            zeros if f_res is None else flat(f_res), zeros if t_res is None else flat(t_res),
+            p["kf"], p["km"], self.kd[0].item(), self.kd[1].item(), self.mass.item(),
+            self.gravity.item(), self.inertia.numpy(), self.rotor_xy.numpy(),
+            self.yaw_sign.numpy(), self.n_sub, DT / self.n_sub)
+        return tuple(torch.from_numpy(o).reshape(*lead, *o.shape[1:]) for o in out)
 
 
 def mlp(n_in: int, n_out: int, hidden: int, layers: int) -> nn.Sequential:

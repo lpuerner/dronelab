@@ -172,13 +172,15 @@ For R4 this means: the MPC gets the same estimator, the hybrid with estimate is 
 
 | model | parameters | rollout 512 × 20 steps (1 thread) | training per seed |
 |---|---|---|---|
-| `phys` | 5 | 92 ms | 9 min |
-| `phys+mlp` | 26.6 k | 122 ms | 27 min |
-| `mlp` | 24.6 k | **40 ms** | 8 min |
+| `phys`, `phys (URDF)` | 5 | 78 ms | 9 min (URDF: none) |
+| `phys+mlp` | 26.6 k | 103 ms | 27 min |
+| `mlp` | 24.6 k | **32 ms** | 8 min |
 
-The 5 physics substeps make up most of the cost of `phys` and `phys+mlp`.
+The 5 physics substeps make up most of the cost of `phys` and `phys+mlp`. The timings vary by about ±20 % with the load of the laptop (an earlier run measured 92 / 122 / 40 ms).
 
 At 48 Hz a control step has 21 ms, so neither model is real-time for MPPI with 512 samples in eager PyTorch on this CPU. R4 has to reduce samples or substeps, or compile the rollout. Until then the trade-off stands at:
+
+*Update (R4.0):* the batch is overhead-bound (each torch op on 512 × 3 values costs 5–40 µs). Without gradients the physics step now runs as one numba loop (`src/dronelab/surrogate/fast.py`, same results to 1e-5). With all 5 substeps, 512 × 20 steps then take 9 ms for `phys (URDF)` and 35 ms for `phys+mlp`, where the network is now the main cost ([timing](../control/results/mppi/timing.md)). The table and trade-off above are the eager-PyTorch numbers:
 
 * `phys+mlp`: 2–4 times more accurate;
 * `mlp`: 3 times faster.

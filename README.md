@@ -20,6 +20,8 @@ A Crazyflie 2.x (CF2X) flies in PyBullet (gym-pybullet-drones [1]). Every layer 
 | 4 | State estimation | How well do the controllers fly when the state has to be estimated from sensors? | planned |
 | 5 | Vision | Can the drone find and fly through the gates from camera images? | planned |
 
+Project history and a glossary of the stage and test-set codes (R1–R4, T1–T5, …): [docs/STATUS.md](docs/STATUS.md).
+
 **Key result (control, R1):** in a simulated world with aerodynamics and motor lag that the controllers' model does not contain, the tuned LQI tracks at 1.3 cm RMSE at 1 m/s (3.5 cm at 3 m/s), the tuned PID at 2.2 cm (5.1 cm) and the untuned reference PID at 6.6 cm (only 20 % of the flights survive 3 m/s); thanks to its integrator LQI is by far the most robust under wind and payload, and no controller survives 100 ms motor lag on path courses. Details in the [control README](projects/control/README.md).
 
 **Key result (surrogate):** a physics prior with a learned MLP residual predicts the drone 0.42 s ahead (one MPC horizon) to ~0.1 cm in position, 2–4× better than a pure MLP and ~100× better than the fitted physics alone, which misses the blade-flapping moment; it also generalises better to an unseen controller. Neither model can predict unknown wind or payload (~8 cm). Details in the [surrogate README](projects/surrogate/README.md).
