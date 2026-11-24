@@ -1,0 +1,31 @@
+{
+  "controller": "lqi",
+  "world": "real",
+  "n_trials": 200,
+  "episodes_per_trial": 8,
+  "validation_episodes": 40,
+  "top_k": 5,
+  "objective": "mean_f(rmse/ref) + 0.3*mean_f(smooth/ref) + 1.0*crash_rate",
+  "selected_trial": 187,
+  "validation_selected": {
+    "rmse": 0.05595163917288835,
+    "smoothness": 0.0013516665266531179,
+    "rmse_rel": 0.4678937421193495,
+    "smooth_rel": 1.1138777660194512,
+    "crash_rate": 0.0,
+    "J": 0.8020570719251848
+  },
+  "validation_defaults": {
+    "rmse": 0.06807176317949841,
+    "smoothness": 0.0012674119684010373,
+    "rmse_rel": 0.814984260707544,
+    "smooth_rel": 1.0473185021113012,
+    "crash_rate": 0.0,
+    "J": 1.1291798113409344
+  },
+  "wall_time_tuning_s": 2455.9,
+  "wall_time_total_s": 2740.2,
+  "cpu_hours": 1.522,
+  "processes": 2,
+  "machine": "Intel64 Family 6 Model 142 Stepping 9, GenuineIntel"
+}

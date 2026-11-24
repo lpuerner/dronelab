@@ -1,8 +1,8 @@
 # R1 in the real world (stage 0b): aerodynamics + 20 ms motor lag + extra aerodynamics.
-# Same structure as stage1.yaml; controllers re-tuned in this world (tuning_real/).
+# Same structure as stage1.yaml; PID and LQI re-tuned in this world (tuning_real/).
 name: r1
 world: real
-controllers: [dsl_pid, pid, lqr, lqi]
+controllers: [dsl_pid, pid, lqi]   # LQR not re-tuned in the real world
 params_dir: projects/control/results/tuning_real   # <params_dir>/<controller>/best_params.yaml
 seeds: [1000, 1001, 1002, 1003, 1004]
 
