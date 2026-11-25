@@ -1,0 +1,14 @@
+# R4.5 ablations of the MPPI controller, part B only, rows go into the same r1.csv.
+#   mppi_hybrid_nodob: disturbance estimate off
+#   mppi_hybrid_cand: reference candidate alone (geometric PD law, no rollouts)
+# Both use the mppi_hybrid gains (benchmark.py _load_gains). Run without --log-flights.
+name: r1
+world: real
+controllers: [mppi_hybrid_nodob, mppi_hybrid_cand]
+params_dir: projects/control/results/tuning_real
+seeds: [1000, 1001, 1002, 1003, 1004]
+
+part_b:
+  families: [hover, figure8, gates]
+  speed: 1.0
+  scenarios: all

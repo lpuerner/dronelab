@@ -7,7 +7,7 @@ Details are in the subproject READMEs.
 
 | # | Subproject | Stages | Status |
 |---|---|---|---|
-| 1 | [Control](../projects/control/README.md) | R1 done · R2, R3 planned · R4 next | R1 in the `real` world: LQI 1.3 cm RMSE at 1 m/s (3.5 cm at 3 m/s), PID 2.2 cm (5.1 cm), DSL-PID 6.6 cm (only 20 % of the flights survive 3 m/s). LQI is the most robust under wind and payload; no controller survives 100 ms motor lag on path courses. LQR is not re-tuned in the `real` world. |
+| 1 | [Control](../projects/control/README.md) | R1 done · R2 + R4 tuned, benchmark next · R3 planned | R2: INDI tuned, J 0.70 on validation, most accurate controller so far (rmse_rel 0.43). R4: MPPI with the `phys+mlp` surrogate, tuned J 0.65 on validation (LQI 0.80): about as accurate as LQI (rmse_rel 0.50 vs 0.47) with less than half the command change. R1 in the `real` world: LQI 1.3 cm RMSE at 1 m/s (3.5 cm at 3 m/s), PID 2.2 cm (5.1 cm), DSL-PID 6.6 cm (only 20 % of the flights survive 3 m/s). LQI is the most robust under wind and payload; no controller survives 100 ms motor lag on path courses. LQR is not re-tuned in the `real` world. |
 | 2 | [Surrogate](../projects/surrogate/README.md) | S1–S3 done (first round) · GRU, T5 open | `phys+mlp` ≈ 0.1 cm after 0.42 s on T1–T3, 2–4× better than `mlp`; physics alone tilts away. Under disturbances (T4) ~8 cm; disturbance estimation lowers wind/payload errors by a factor of 10–100. Rollout 512 × 20 steps: 32–103 ms, not real-time yet. |
 | 3 | Autonomy | A1–A4 | planned |
 | 4 | State estimation | Z1–Z4 | planned |
@@ -27,6 +27,10 @@ R4 is done before R2/R3 because it needs the finished surrogate; R2 and R3 do no
 | 2026-11-24 | 0fd15a1 | Surrogate S2/S3: `phys`, `phys+mlp`, `mlp` |
 | 2026-11-24 | 6e4a4b8 | R1 results: control README, analysis, gate figure |
 | 2026-11-24 | 5667788 | Surrogate: URDF physics baseline, offline disturbance estimation |
+| 2026-11-24 | f464238 | R4.0: numba physics step for MPPI rollouts, timing study, this status page |
+| 2026-11-24 | 432a42f | R4.1–R4.2: MPPI controller (thrust + body rates), smoke test |
+| 2026-11-25 | 12c4e35 | R4.3: reference candidate + smoothing after the pilot diagnosis, `mppi_hybrid` tuned (80 trials) |
+| 2026-11-25 | – | R4.3c: candidate-only ablation (tilt cost relative to the reference tested, < 1 %, not kept), comparison with two MPPI papers, benchmark configs |
 
 ## Glossary
 
@@ -79,6 +83,9 @@ Training: 583 flights (seeds 20 000–20 599), validation: 98 flights (21 000–
 | `dsl_pid` | untuned reference PID of gym-pybullet-drones |
 | `pid` | cascaded PID, tuned |
 | `lqr` / `lqi` | LQR (not re-tuned in the `real` world) / LQR with integrator, tuned |
+| `indi` | incremental nonlinear dynamic inversion (force + torque from measured accelerations), tuned |
+| `mppi_hybrid` / `mppi_urdf` | MPPI with the `phys+mlp` surrogate (tuned) / with URDF physics (hybrid gains) |
+| `_nodob` / `_cand` | MPPI ablations: disturbance estimate off / reference candidate alone (geometric PD) |
 | `phys` | physics model with fitted parameters |
 | `phys (URDF)` | physics with data-sheet parameters, not fitted; physics baseline for R4 |
 | `phys+mlp` | physics + MLP residual, most accurate model |

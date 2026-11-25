@@ -46,10 +46,16 @@ def _git() -> str:
 
 
 def _load_gains(cfg: dict) -> dict[str, dict | None]:
+    """Tuned gains per controller. Ablation variants (suffix ``_nodob`` / ``_cand``) use the
+    gains of their base controller; MPPI variants without own tuning use ``mppi_hybrid``'s."""
+    root = Path(cfg.get("params_dir", PARAMS_DIR))
     gains = {}
     for c in cfg["controllers"]:
-        path = Path(cfg.get("params_dir", PARAMS_DIR)) / c / "best_params.yaml"
-        gains[c] = yaml.safe_load(path.read_text()) if path.exists() else None
+        base = c.removesuffix("_cand").removesuffix("_nodob")
+        names = [c, base] + (["mppi_hybrid"] if base.startswith("mppi_") else [])
+        path = next((root / n / "best_params.yaml" for n in names
+                     if (root / n / "best_params.yaml").exists()), None)
+        gains[c] = yaml.safe_load(path.read_text()) if path else None
     return gains
 
 

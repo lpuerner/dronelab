@@ -7,9 +7,9 @@ Part of [dronelab](../../README.md). All controllers fly the same randomised cou
 | Stage | Methods | Status |
 |---|---|---|
 | R1 | cascaded PID (reference: gym-pybullet-drones `DSLPIDControl` [1]), own PID, LQI – tuned and benchmarked in the `real` world | done |
-| R2 | INDI (incremental nonlinear dynamic inversion) | planned |
+| R2 | INDI (incremental nonlinear dynamic inversion) | tuned (J 0.70 on validation), benchmark next |
 | R3 | learned controller: PPO policy (collective thrust + body rates) | planned |
-| R4 | sampling MPC (MPPI) with the learned dynamics model from subproject 2 | planned |
+| R4 | sampling MPC (MPPI) with the learned dynamics model from subproject 2 | tuned, benchmark next |
 
 Disturbances: mass change (payload), constant wind + gusts, motor lag, sensor noise, drag + ground effect, combinations.
 
@@ -262,7 +262,41 @@ Controller compute time per step (median): dsl_pid 1.244 ms, pid 0.731 ms, lqi 0
 _1275 episodes, git 15c6cca-dirty, config 5aad03090e_
 <!-- STAGE1-RESULTS:END -->
 
+## R4 – MPPI with the learned surrogate (in progress)
+
+`src/dronelab/control/mppi.py`. Every control step K = 512 perturbed sequences of (collective thrust, desired body rates) over H = 20 steps (0.42 s, the horizon the surrogate was trained on) are rolled out with a model from the [surrogate subproject](../surrogate/README.md), scored against the reference preview and averaged with weights exp(−J/λ); the first command is applied, the sequence is shifted and reused (warm start). Variants: `mppi_hybrid` (`phys+mlp`, the learned residual model) and `mppi_urdf` (data-sheet physics, no learning; benchmarked with the hybrid gains, not tuned on its own).
+
+| Part | Design |
+|---|---|
+| inputs | thrust + body rates; a fixed P rate loop (the tuned PID's rate gains) runs inside every rollout step and on the measured rates. Sampling the torques directly was tried first and tracked 5–10× worse than LQI |
+| model | surrogate rollout with an 8-step history (motor state included), physics step in numba (`surrogate/fast.py`): ~70 ms per control step for `phys+mlp`, ~9 ms for URDF physics on one CPU core |
+| disturbance | one-step prediction error, smoothed by an EMA with time constant τ_d (tuned), added to every predicted step (offset-free MPC); only in the prediction, not on the command |
+| cost | position, velocity, tilt (1 − cos), yaw, body rates, command change, terminal weight; crash penalty 10⁴ |
+| reference candidate | a geometric PD law (thrust and rates from the desired acceleration) gives one extra sample plus 1/16 of the samples around it |
+| smoothing | Savitzky-Golay over the last 4 applied + the 20 planned commands |
+
+**Why the candidate and the smoothing.** Plain MPPI with hand-set defaults reached J = 1.41 against 0.90 for LQI on the tuning episodes, and a 30-trial pilot study improved it only to 1.39. Diagnosis on one hover and one figure-eight episode: (1) on take-off the nominal thrust can only move by about σ per step, so MPPI climbed with ≤ 0.31 N where LQI used 0.57 N (38 vs 25 cm RMSE); the same slow build-up gave a 6 cm error peak at the start of path courses; (2) the weighted noise average makes the commands jitter (1.8× LQI's command change on the tuning episodes). In between, on the figure-eight, MPPI tracked *better* than LQI (0.3–0.8 vs 1–1.5 cm) – the model was not the problem. Both additions together gave J = 0.89 with the defaults; plots in `results/tuning_real/mppi_hybrid_pilot1/`.
+
+**Tuning** (same objective, episodes and validation as R1; 11 parameters, w_pos fixed because the cost is normalised; **80 instead of 200 trials** because one trial takes ~4.5 min on the laptop – 17 CPU-h in total vs 1.5 for LQI):
+
+| Controller | J validation | rmse_rel | smooth_rel | crash rate |
+|---|---:|---:|---:|---:|
+| PID (tuned) | 0.921 | 0.611 | 1.03 | 0 |
+| LQI (tuned) | 0.802 | **0.468** | 1.11 | 0 |
+| MPPI hybrid, defaults | 0.781 | 0.638 | 0.48 | 0 |
+| MPPI hybrid, tuned | **0.652** | 0.507 | **0.48** | 0 |
+| MPPI hybrid, tuned, tilt cost relative to the reference (not kept) | 0.648 | 0.503 | 0.48 | 0 |
+| reference candidate alone (geometric PD, untuned) | 2.344 | 2.185 | 0.53 | 0 |
+
+MPPI wins on J through the command smoothness (less than half of LQI's command change); LQI is still ~8 % more accurate. The candidate alone tracks 4× worse – the gain comes from the optimisation over the learned model, not from the PD law it is seeded with (`results/mppi/ablation.md`). Measuring the tilt against the thrust direction the reference needs (as the attitude error of [3]) instead of against the vertical changed J by < 1 % (the tuned tilt weight is small) and was not kept.
+
+**Comparison with published MPPI for quadrotors.** Minařík et al. [3] use the same interface (thrust + body rates) with a 1.5 s horizon of coarse 0.1 s steps and an analytic model, and report that MPPI loses to a geometric SE(3) controller in nominal tracking. Kotek et al. [4] show that modelling the low-level rate controller and the motors inside the rollout is the main nominal gain (here: the P rate loop in the rollout and the motor state in the surrogate) and add an L1 adaptive loop on the command; our disturbance estimate plays a similar role inside the prediction (ablation `_nodob` in the benchmark). Not taken over: longer horizons (the surrogate is trained at 48 Hz; 0.42 s suffice for the courses, a longer horizon would cost 1.5–2× compute), saturation handling inside the rollout like the real mixer (only matters at the motor limits – revisit if MPPI falls behind at 2–3 m/s), delay compensation (the simulation has no latency).
+
+Next: benchmark `r1` with `mppi_hybrid` and `mppi_urdf` (Part A + B), ablations `mppi_hybrid_nodob` / `mppi_hybrid_cand` on Part B (`configs/benchmark/r1_mppi_ablation.yaml`), both without `--log-flights`.
+
 ## References
 
 1. J. Panerati, H. Zheng, S. Zhou, J. Xu, A. Prorok, A. P. Schoellig, "Learning to Fly—a Gym Environment with PyBullet Physics for Reinforcement Learning of Multi-agent Quadcopter Control," *IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2021. [arXiv:2103.02142](https://arxiv.org/abs/2103.02142) · Code: [utiasDSL/gym-pybullet-drones](https://github.com/utiasDSL/gym-pybullet-drones)
 2. M. M. Madebo, M. Y. Erten, H. Aydilek, "PSO-optimized physics-informed neural network-based fuzzy-sliding mode controller design for quadrotor altitude stabilization and trajectory tracking," *Ain Shams Engineering Journal*, vol. 17, art. 104312, 2026. [doi:10.1016/j.asej.2026.104312](https://doi.org/10.1016/j.asej.2026.104312)
+3. M. Minařík, R. Pěnička, V. Vonásek, M. Saska, "Model Predictive Path Integral Control for Agile Unmanned Aerial Vehicles," *IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)*, 2024. [arXiv:2407.09812](https://arxiv.org/abs/2407.09812)
+4. L. Kotek, O. Procházka, V. Vonásek, M. Saska, R. Pěnička, "L1-MPPI: L1 Adaptive Model Predictive Path Integral for Agile UAV Control," arXiv preprint, 2026. [arXiv:2609.38467](https://arxiv.org/abs/2609.38467)

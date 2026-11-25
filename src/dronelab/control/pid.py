@@ -72,7 +72,12 @@ class CascadedPID(Controller):
         kd = np.array([g.pos_kd_xy, g.pos_kd_xy, g.pos_kd_z])
         ki = np.array([g.pos_ki_xy, g.pos_ki_xy, g.pos_ki_z])
         acc = ref.acc + kp * e_p + kd * e_v + ki * self.i_pos
-        f = self.p.mass * (acc + np.array([0.0, 0.0, self.p.gravity]))
+        return self.limit_thrust_vector(
+            self.p.mass * (acc + np.array([0.0, 0.0, self.p.gravity])))
+
+    def limit_thrust_vector(self, f: np.ndarray) -> np.ndarray:
+        """Keep a minimum upward thrust, the tilt limit and the thrust limit."""
+        f = f.copy()
         f[2] = max(f[2], 0.1 * self.p.mass * self.p.gravity)
         # limit tilt: shrink the horizontal part
         horiz = np.linalg.norm(f[:2])

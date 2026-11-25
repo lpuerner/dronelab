@@ -2,7 +2,9 @@
 # Same structure as stage1.yaml; PID and LQI re-tuned in this world (tuning_real/).
 name: r1
 world: real
-controllers: [dsl_pid, pid, lqi]   # LQR not re-tuned in the real world
+controllers: [dsl_pid, pid, lqi, indi, mppi_hybrid, mppi_urdf]   # LQR not re-tuned in the real world
+# mppi_urdf is not tuned on its own: it flies with the mppi_hybrid gains (R4).
+# Run MPPI rows WITHOUT --log-flights: T3/T4 hold the flights of DSL-PID, PID and LQI only.
 params_dir: projects/control/results/tuning_real   # <params_dir>/<controller>/best_params.yaml
 seeds: [1000, 1001, 1002, 1003, 1004]
 

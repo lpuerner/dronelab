@@ -26,6 +26,7 @@ from dataclasses import fields
 
 import numpy as np
 
+from dronelab.control.indi import INDIGains
 from dronelab.control.lqr import LQRWeights
 from dronelab.control.mppi import MPPIGains
 from dronelab.control.pid import PIDGains
@@ -64,6 +65,7 @@ def _defaults(cls) -> dict:
 _PID = _defaults(PIDGains)
 _LQR = _defaults(LQRWeights)
 _LQR_ONLY = {k: v for k, v in _LQR.items() if not k.startswith("int_")}
+_INDI = _defaults(INDIGains)
 _MPPI = {k: v for k, v in _defaults(MPPIGains).items() if k != "w_pos"}  # w_pos fixed
 _MPPI_WIDE = ("w_vel", "w_att")  # at the lower bound in the R4.3 pilot
 
@@ -71,10 +73,12 @@ SEARCH_SPACES: dict[str, dict[str, tuple[float, float]]] = {
     "pid": _log_space(_PID, wide=tuple(k for k in _PID if "_ki_" in k)),
     "lqr": _log_space(_LQR_ONLY),
     "lqi": _log_space(_LQR),
+    "indi": _log_space(_INDI),
     "mppi_hybrid": _log_space(_MPPI, wide=_MPPI_WIDE),
     "mppi_urdf": _log_space(_MPPI, wide=_MPPI_WIDE),
 }
-DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR, "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
+DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR, "indi": _INDI,
+            "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
 
 
 def _episodes(controller: str, seeds: range, n: int, gains: dict | None,

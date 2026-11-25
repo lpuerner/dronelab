@@ -81,7 +81,8 @@ def load_surrogate(kind: str):
 
 class MPPIController(Controller):
     def __init__(self, params: DroneParams, ctrl_dt: float, gains: dict | None = None,
-                 model: str = "hybrid", dob: bool = True, max_tilt_deg: float = 80.0):
+                 model: str = "hybrid", dob: bool = True, max_tilt_deg: float = 80.0,
+                 cand_only: bool = False):
         from dronelab.surrogate.data import DT
 
         if abs(ctrl_dt - DT) > 1e-9:
@@ -89,8 +90,9 @@ class MPPIController(Controller):
         gains = dict(gains or {})
         self.samples = int(gains.pop("samples", SAMPLES))  # fixed per study, not tuned
         self.g = MPPIGains(**gains)
-        self.name = f"mppi_{model}" + ("" if dob else "_nodob")
+        self.name = f"mppi_{model}" + ("" if dob else "_nodob") + ("_cand" if cand_only else "")
         self.p, self.dt, self.dob = params, ctrl_dt, dob
+        self.cand_only = cand_only  # ablation: fly the reference candidate alone (no rollouts)
         torch.set_num_threads(1)  # benchmark/tuning run one process per core
         self.model = load_surrogate(model)
         self.mixer = Mixer(params)
@@ -133,6 +135,11 @@ class MPPIController(Controller):
         if self.dob and self.k > WARMUP:  # buffer holds flown steps only from here on
             self._update_disturbance()
         ref_p, ref_v, ref_a = self._preview(ref)
+        if self.cand_only:
+            u = self._candidate(ref, ref_a, omega)[0]
+            tau = self._rate_loop(u[1:], omega).numpy().astype(float)
+            self.k += 1
+            return self.mixer.wrench_to_rpm(float(u[0]), tau)
         eps = self._noise()
         n_c = max(1, int(CAND_FRAC * self.samples))
         d = self._candidate(ref, ref_a, omega) - self.U
