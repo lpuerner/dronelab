@@ -15,7 +15,8 @@
 * Validation: the best 5 trials are re-flown on 40 episodes from seeds 100-199; the one
   with the lowest validation objective is selected.
 * Search space: each parameter is searched log-uniformly in [default / f, default * f]
-  around its hand-set default (f = 5, f = 10 for integral gains).
+  around its hand-set default (f = 5, f = 10 for integral gains and the MPPI weights w_vel,
+  w_att; the MPPI weight w_pos is fixed since the cost is normalised).
 """
 
 from __future__ import annotations
@@ -63,14 +64,15 @@ def _defaults(cls) -> dict:
 _PID = _defaults(PIDGains)
 _LQR = _defaults(LQRWeights)
 _LQR_ONLY = {k: v for k, v in _LQR.items() if not k.startswith("int_")}
-_MPPI = _defaults(MPPIGains)
+_MPPI = {k: v for k, v in _defaults(MPPIGains).items() if k != "w_pos"}  # w_pos fixed
+_MPPI_WIDE = ("w_vel", "w_att")  # at the lower bound in the R4.3 pilot
 
 SEARCH_SPACES: dict[str, dict[str, tuple[float, float]]] = {
     "pid": _log_space(_PID, wide=tuple(k for k in _PID if "_ki_" in k)),
     "lqr": _log_space(_LQR_ONLY),
     "lqi": _log_space(_LQR),
-    "mppi_hybrid": _log_space(_MPPI),
-    "mppi_urdf": _log_space(_MPPI),
+    "mppi_hybrid": _log_space(_MPPI, wide=_MPPI_WIDE),
+    "mppi_urdf": _log_space(_MPPI, wide=_MPPI_WIDE),
 }
 DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR, "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
 

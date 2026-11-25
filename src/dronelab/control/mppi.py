@@ -10,6 +10,13 @@ rate gains of the tuned cascaded PID. It runs inside every rollout step on the p
 rates and once per control step on the measured ones. Sampling the torques directly was
 tried first and tracked 5-10x worse than LQI (the sampler has to stabilise the attitude).
 
+Two additions against the weaknesses of plain MPPI (R4.3 pilot diagnosis):
+* a reference candidate: a geometric PD law (thrust and rates from the desired acceleration)
+  gives one extra sequence plus a few noisy samples around it, so large jumps (take-off, start
+  of a course) are found in one step instead of being sampled up by sigma per step;
+* Savitzky-Golay smoothing of the updated sequence together with the last applied commands
+  (as in Williams et al.), which removes the step-to-step jitter of the weighted noise average.
+
 A disturbance estimate (offset-free MPC) is added to every predicted step: the one-step
 prediction error of the last step, smoothed by an exponential moving average.
 """
@@ -21,6 +28,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from scipy.signal import savgol_filter
 
 from dronelab.control.mixer import Mixer
 from dronelab.core.backends.base import DroneParams, DroneState
@@ -35,6 +43,9 @@ SAMPLES = 512
 NOISE_CORR = 0.5  # low-pass of the sampling noise along the horizon (fixed, not tuned)
 RATE_KP = (41.6, 41.6, 11.8)  # inner rate loop [1/s]: tuned PID (tuning_real/pid), P part only
 RATE_SCALE = 5.0  # [rad/s] normalises rate commands in the command-change cost
+CAND_KP, CAND_KD, CAND_KATT = 4.0, 3.0, 8.0  # reference candidate [1/s^2], [1/s], [1/s]
+CAND_FRAC = 1 / 16  # share of the samples drawn around the candidate
+SMOOTH_PAST, SMOOTH_WIN, SMOOTH_ORDER = 4, 9, 2  # Savitzky-Golay over past + planned commands
 CRASH_COST = 1e4
 MIN_Z = 0.05
 
@@ -50,7 +61,7 @@ class MPPIGains:
     sigma_thrust: float = 0.003  # [N], ~1 % of hover thrust
     sigma_rate: float = 0.25  # [rad/s] roll/pitch rate
     sigma_yaw: float = 0.12  # [rad/s] yaw rate
-    w_pos: float = 100.0  # [1/m^2]
+    w_pos: float = 100.0  # [1/m^2], fixed (cost is normalised, only weight ratios matter)
     w_vel: float = 10.0  # [s^2/m^2]
     w_att: float = 2.0  # on 1 - cos(tilt)
     w_yaw: float = 1.0  # [1/rad^2]
@@ -88,12 +99,13 @@ class MPPIController(Controller):
         self.J = torch.tensor(params.inertia, dtype=torch.float32)
         self.kp = torch.tensor(RATE_KP)
         hover = params.mass * params.gravity
+        self.max_thrust = 4 * params.kf * params.max_rpm**2
         self.u_scale = torch.tensor([hover, RATE_SCALE, RATE_SCALE, RATE_SCALE])
         self.u_hover = torch.tensor([hover, 0.0, 0.0, 0.0])
         self.sigma = torch.tensor([self.g.sigma_thrust, self.g.sigma_rate, self.g.sigma_rate,
                                    self.g.sigma_yaw])
         self.cos_tilt = math.cos(math.radians(max_tilt_deg))
-        self.ref_pos = self.ref_vel = None
+        self.ref_pos = self.ref_vel = self.ref_acc = None
         self.reset()
 
     # --------------------------------------------------------------- interface
@@ -101,6 +113,7 @@ class MPPIController(Controller):
         self.k = 0
         self.U = self.u_hover.repeat(HORIZON, 1)  # nominal (thrust, body rates)
         self.u_last = self.u_hover.clone()  # command applied in the previous step
+        self.u_past = self.u_hover.repeat(SMOOTH_PAST, 1)  # applied commands, oldest first
         self.hist = None  # (pos, vel, rot, omega) each (WARMUP + 1, ...)
         self.u_hist = torch.full((WARMUP, 4), self.p.hover_rpm)  # rpm sent before
         self.dist = (torch.zeros(1, 3), torch.zeros(1, 3))
@@ -112,20 +125,26 @@ class MPPIController(Controller):
         refs = [course.reference(k * self.dt) for k in range(n)]
         self.ref_pos = torch.tensor(np.array([r.pos for r in refs]), dtype=torch.float32)
         self.ref_vel = torch.tensor(np.array([r.vel for r in refs]), dtype=torch.float32)
+        self.ref_acc = torch.tensor(np.array([r.acc for r in refs]), dtype=torch.float32)
 
     @torch.no_grad()
     def act(self, state: DroneState, ref: Reference) -> np.ndarray:
         omega = self._observe(state)
         if self.dob and self.k > WARMUP:  # buffer holds flown steps only from here on
             self._update_disturbance()
-        ref_p, ref_v = self._preview(ref)
+        ref_p, ref_v, ref_a = self._preview(ref)
         eps = self._noise()
+        n_c = max(1, int(CAND_FRAC * self.samples))
+        d = self._candidate(ref, ref_a, omega) - self.U
+        eps[1:1 + n_c] += d  # noisy samples around the candidate ...
+        eps[1] = d  # ... and the exact candidate
         U = self.U[None] + eps  # (K, H, 4)
         cost = self._rollout_cost(U, ref_p, ref_v)
         cost_n = (cost - cost.min()) / (cost.median() - cost.min() + 1e-9)
         w = torch.softmax(-cost_n / self.g.lam, 0)
-        self.U = self.U + (w[:, None, None] * eps).sum(0)
+        self.U = self._smooth(self.U + (w[:, None, None] * eps).sum(0))
         self.u_last = self.U[0].clone()
+        self.u_past = torch.cat([self.u_past[1:], self.u_last[None]])
         tau = self._rate_loop(self.u_last[1:], omega).numpy().astype(float)
         rpm = self.mixer.wrench_to_rpm(float(self.u_last[0]), tau)
         self.U = torch.cat([self.U[1:], self.U[-1:]])
@@ -159,11 +178,30 @@ class MPPIController(Controller):
 
     def _preview(self, ref: Reference):
         if self.ref_pos is None:  # no course given: hold the current reference
-            p = torch.tensor(ref.pos, dtype=torch.float32)
-            return p.expand(HORIZON, 3), torch.tensor(ref.vel, dtype=torch.float32).expand(
-                HORIZON, 3)
+            return tuple(torch.tensor(x, dtype=torch.float32).expand(HORIZON, 3)
+                         for x in (ref.pos, ref.vel, ref.acc))
         i = min(self.k + 1, len(self.ref_pos) - HORIZON)
-        return self.ref_pos[i:i + HORIZON], self.ref_vel[i:i + HORIZON]
+        return self.ref_pos[i:i + HORIZON], self.ref_vel[i:i + HORIZON], self.ref_acc[
+            i:i + HORIZON]
+
+    def _candidate(self, ref: Reference, ref_a, omega) -> torch.Tensor:
+        """(H, 4) sequence of a geometric PD law: desired acceleration from the current
+        error + reference feed-forward -> thrust along the body z axis and tilt rates."""
+        pos, vel, rot = (t[-1] for t in self.hist[:3])
+        fb = CAND_KP * (torch.tensor(ref.pos, dtype=torch.float32) - pos) + CAND_KD * (
+            torch.tensor(ref.vel, dtype=torch.float32) - vel)
+        f = ref_a + fb + torch.tensor([0.0, 0.0, self.p.gravity])  # (H, 3) specific force
+        thrust = (self.p.mass * f @ rot[:, 2]).clamp(0.0, self.max_thrust)
+        z_des = f[0] / f[0].norm().clamp_min(1e-6)
+        rates = CAND_KATT * (rot.T @ torch.cross(rot[:, 2], z_des, dim=0))
+        rates[2] = -CAND_KATT * torch.atan2(rot[1, 0], rot[0, 0])  # hold yaw 0
+        return torch.cat([thrust[:, None], rates.expand(HORIZON, 3)], -1)
+
+    def _smooth(self, U: torch.Tensor) -> torch.Tensor:
+        """Savitzky-Golay along time over the applied past commands + the new plan."""
+        x = torch.cat([self.u_past, U]).numpy()
+        y = savgol_filter(x, SMOOTH_WIN, SMOOTH_ORDER, axis=0, mode="interp")
+        return torch.from_numpy(y[SMOOTH_PAST:].astype(np.float32))
 
     def _noise(self) -> torch.Tensor:
         e = torch.randn(self.samples, HORIZON, 4, generator=self.gen)
