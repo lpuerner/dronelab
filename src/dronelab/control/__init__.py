@@ -2,7 +2,7 @@ from dronelab.core.controller import Controller, Reference
 
 __all__ = ["CONTROLLERS", "Controller", "Reference", "make_controller"]
 
-CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi", "indi", "mppi_hybrid", "mppi_urdf")
+CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi", "indi", "indi_sg", "mppi_hybrid", "mppi_urdf")
 
 
 def make_controller(
@@ -34,10 +34,11 @@ def _base(name: str, params, ctrl_dt: float, gains: dict | None) -> Controller:
         from dronelab.control.lqr import LQRController
 
         return LQRController(params, ctrl_dt, gains, integral=name == "lqi")
-    if name == "indi":
-        from dronelab.control.indi import INDIController
+    if name in ("indi", "indi_sg"):
+        from dronelab.control.indi import ACC_WIN, INDIController
 
-        return INDIController(params, ctrl_dt, gains)
+        return INDIController(params, ctrl_dt, gains,
+                              acc_window=ACC_WIN if name == "indi_sg" else 0)
     base = name.removesuffix("_cand").removesuffix("_nodob")
     if base in ("mppi_hybrid", "mppi_urdf", "mppi_mlp"):  # suffixes: ablations (R4.5)
         from dronelab.control.mppi import MPPIController

@@ -16,6 +16,14 @@ low-pass as the measurement, so that both are synchronous (the standard INDI req
 Outer loops as in :class:`~dronelab.control.pid.CascadedPID` (same tilt / rate limits): PD
 position law -> desired acceleration -> thrust vector -> attitude (Lee et al.) -> body rates
 -> desired angular acceleration. No integrators: steady disturbances are measured instead.
+
+Variant ``indi_sg`` (``acc_window > 0``): the finite difference of the noisy velocity amplifies
+its noise by sqrt(2)/dt. ``f_f - m a_f`` is the estimate of the external force (gravity, wind,
+payload), so filtering it harder only slows the disturbance estimate, not the tracking
+(``m a_des`` passes unfiltered). The translation then uses the slope of a straight line
+through the last ``acc_window`` velocities (Savitzky-Golay, order 1) instead of the low-pass;
+the same weights are applied to the thrust vector, so both stay synchronous. The rotation
+keeps the low-pass (the gyro is not noisy).
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ from dronelab.core.controller import Reference
 from dronelab.core.models.rigid_body import quat_to_rot
 
 MOTOR_TAU = 0.02  # [s] nominal motor time constant of the `real` world (as the MPPI baseline)
+ACC_WIN = 9  # indi_sg: velocities in the Savitzky-Golay (straight-line fit) derivative
 
 
 @dataclass
@@ -47,7 +56,7 @@ class INDIGains:
     # rate loop: desired angular acceleration per rad/s of rate error
     rate_kp_rp: float = 25.0
     rate_kp_yaw: float = 10.0
-    filt_hz: float = 10.0  # cut-off of the first-order low-pass on measurement and wrench
+    filt_hz: float = 10.0  # first-order low-pass on measurement and wrench (indi_sg: rotation)
 
 
 class INDIController(CascadedPID):
@@ -55,8 +64,15 @@ class INDIController(CascadedPID):
 
     def __init__(self, params: DroneParams, ctrl_dt: float, gains: dict | None = None,
                  max_tilt_deg: float = 45.0, max_rate: float = 10.0,
-                 motor_tau: float = MOTOR_TAU):
+                 motor_tau: float = MOTOR_TAU, acc_window: int = 0):
         self.p, self.dt = params, ctrl_dt
+        self.w_sg = None
+        if acc_window:
+            self.name = "indi_sg"
+            c = np.arange(acc_window) - (acc_window - 1) / 2
+            c /= c @ c  # slope of the line fit: sum c_i v_i (per step)
+            # = weighted mean of the acc_window - 1 differences, weights sum to 1
+            self.w_sg = np.cumsum(c[::-1])[::-1][1:]
         self.g = INDIGains(**(gains or {}))
         self.max_tilt = np.deg2rad(max_tilt_deg)
         self.max_rate = max_rate
@@ -74,6 +90,8 @@ class INDIController(CascadedPID):
         self.wdot_f = np.zeros(3)  # filtered measured angular acceleration (body)
         self.f_f = np.array([0.0, 0.0, p.mass * p.gravity])  # filtered thrust vector (world)
         self.tau_f = np.zeros(3)  # filtered torque (body)
+        if self.w_sg is not None:  # external force f - m a per past interval (world)
+            self.d_hist = np.tile(self.f_f, (len(self.w_sg), 1))
 
     def act(self, s: DroneState, ref: Reference) -> np.ndarray:
         g, p = self.g, self.p
@@ -85,15 +103,22 @@ class INDIController(CascadedPID):
         else:
             acc, wdot = (s.vel - self.prev[0]) / self.dt, (w - self.prev[1]) / self.dt
         b = self.beta
-        self.acc_f += b * (acc - self.acc_f)
         self.wdot_f += b * (wdot - self.wdot_f)
-        self.f_f += b * (self.R_prev[:, 2] * wrench[0] - self.f_f)
         self.tau_f += b * (wrench[1:] - self.tau_f)
+        f = self.R_prev[:, 2] * wrench[0]
+        if self.w_sg is None:
+            self.acc_f += b * (acc - self.acc_f)
+            self.f_f += b * (f - self.f_f)
+            f_ext = self.f_f - p.mass * self.acc_f
+        else:
+            if self.prev is not None:
+                self.d_hist = np.vstack([self.d_hist[1:], f - p.mass * acc])
+            f_ext = self.w_sg @ self.d_hist
 
         kp = np.array([g.pos_kp_xy, g.pos_kp_xy, g.pos_kp_z])
         kd = np.array([g.pos_kd_xy, g.pos_kd_xy, g.pos_kd_z])
         a_des = ref.acc + kp * (ref.pos - s.pos) + kd * (ref.vel - s.vel)
-        f_cmd = self.limit_thrust_vector(self.f_f + p.mass * (a_des - self.acc_f))
+        f_cmd = self.limit_thrust_vector(f_ext + p.mass * a_des)
         thrust = max(float(f_cmd @ R[:, 2]), 0.0)
         w_des = self.attitude_control(R, self.desired_rotation(f_cmd, ref.yaw))
         k_rate = np.array([g.rate_kp_rp, g.rate_kp_rp, g.rate_kp_yaw])

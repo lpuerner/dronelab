@@ -74,11 +74,12 @@ SEARCH_SPACES: dict[str, dict[str, tuple[float, float]]] = {
     "lqr": _log_space(_LQR_ONLY),
     "lqi": _log_space(_LQR),
     "indi": _log_space(_INDI),
+    "indi_sg": _log_space(_INDI),
     "mppi_hybrid": _log_space(_MPPI, wide=_MPPI_WIDE),
     "mppi_urdf": _log_space(_MPPI, wide=_MPPI_WIDE),
 }
 DEFAULTS = {"pid": _PID, "lqr": _LQR_ONLY, "lqi": _LQR, "indi": _INDI,
-            "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
+            "indi_sg": _INDI, "mppi_hybrid": _MPPI, "mppi_urdf": _MPPI}
 
 
 def _episodes(controller: str, seeds: range, n: int, gains: dict | None,
