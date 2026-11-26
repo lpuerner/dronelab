@@ -31,10 +31,13 @@ from dronelab.core.eval.plots import save_captioned  # noqa: E402
 from dronelab.core.eval.scenarios import scenario_order  # noqa: E402
 
 # fixed categorical order (colour follows the controller, never its rank)
-COLORS = {"dsl_pid": "#2a78d6", "pid": "#eb6834", "lqr": "#1baf7a", "lqi": "#eda100"}
-MARKERS = {"dsl_pid": "o", "pid": "s", "lqr": "^", "lqi": "D"}
+COLORS = {"dsl_pid": "#2a78d6", "pid": "#eb6834", "lqr": "#1baf7a", "lqi": "#eda100",
+          "indi": "#8a4fd1", "mppi_hybrid": "#d6336c", "mppi_urdf": "#7d7a73"}
+MARKERS = {"dsl_pid": "o", "pid": "s", "lqr": "^", "lqi": "D", "indi": "v",
+           "mppi_hybrid": "P", "mppi_urdf": "X"}
 LABELS = {"dsl_pid": "DSL-PID (untuned anchor)", "pid": "PID (tuned)",
-          "lqr": "LQR (tuned)", "lqi": "LQI (tuned)"}
+          "lqr": "LQR (tuned)", "lqi": "LQI (tuned)", "indi": "INDI (tuned)",
+          "mppi_hybrid": "MPPI-hybrid (tuned)", "mppi_urdf": "MPPI-urdf (hybrid gains)"}
 SEQ = LinearSegmentedColormap.from_list(
     "blue", ["#cde2fb", "#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"])
 INK, MUTED, GRID = "#1f1f1e", "#6b6a66", "#e4e3df"
@@ -159,9 +162,9 @@ def part_a(rows, ctrls, out: Path) -> list[str]:
         style(ax, "path speed [m/s]", "RMSE [cm], median + IQR" if fam == fams[0] else "")
     np.atleast_1d(axes)[-1].text(max(speeds) + 0.1, ax.get_ylim()[0], "extrapolation",
                                  ha="right", va="bottom", color=MUTED, fontsize=8)
-    fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="upper center",
+    fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="lower center",
                ncol=len(ctrls), frameon=False, fontsize=9)
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     save_captioned(fig, out / "speed_sweep.png", "Part A - tracking error vs. path speed",
                    "Test: every controller flies the same courses (5 test seeds per family) "
                    "at a constant speed, without disturbances. Shown: position RMSE of the "
@@ -264,9 +267,9 @@ def part_b(rows, ctrls, out: Path) -> list[str]:
                 ax.set_title(kind.replace("_", " "), color=INK, fontsize=11, loc="left")
             style(ax, XLAB[kind] if fi == len(fams) - 1 else "",
                   f"{fam}\nRMSE [cm]" if ki == 0 else "")
-    fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="upper center", ncol=len(ctrls),
+    fig.legend(*axes[0, 0].get_legend_handles_labels(), loc="lower center", ncol=len(ctrls),
                frameon=False, fontsize=9)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     save_captioned(fig, out / "degradation.png", "Part B - error vs. disturbance strength",
                    "Test: same flights as the heatmap, grouped by disturbance type (columns) "
                    "and course family (rows); the leftmost point of each panel is the "
@@ -350,8 +353,8 @@ def tuning_convergence(tdir: Path, ctrls, out: Path) -> list[str]:
     ax.legend(frameon=False, fontsize=8)
     fig.tight_layout()
     save_captioned(fig, out / "tuning_convergence.png", "Tuning convergence",
-                   "Test: Optuna TPE, 200 trials per controller; each trial flies 8 nominal "
-                   "episodes (hover, figure-eight, helix, waypoints; tuning seeds 0-99). "
+                   "Test: Optuna TPE, 200 trials per controller (MPPI: 80); each trial flies "
+                   "8 nominal episodes (hover, figure-eight, helix, waypoints; tuning seeds 0-99). "
                    "Shown: objective J of every trial (dots) and the best J so far (line); "
                    "lower is better, trial 0 = hand-set default gains. A flat line at the "
                    "end means the budget was sufficient.")
@@ -383,9 +386,9 @@ def pareto(rows, ctrls, out: Path) -> list[str]:
         ax.set_title(fam, color=INK, fontsize=11, loc="left")
         style(ax, "RMSE [cm]", "motor command change per step\n(fraction of max rpm)"
               if fam == fams[0] else "")
-    fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="upper center",
+    fig.legend(*np.atleast_1d(axes)[0].get_legend_handles_labels(), loc="lower center",
                ncol=len(ctrls), frameon=False, fontsize=9)
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     save_captioned(fig, out / "accuracy_vs_smoothness.png", "Accuracy vs. smoothness",
                    "Test: the nominal speed sweep (Part A), one dot per flight. Shown: "
                    "position RMSE (x) against the mean change of the motor commands per "
@@ -551,11 +554,15 @@ def main() -> None:
           for c in ctrls}
     flights = [Path(d) for d in
                (args.flights or FLIGHT_DIRS.get(path.stem, [f"data/flights/{path.stem}"]))]
+    # MPPI/INDI rows were flown without --log-flights: flight-log plots only show logged ones
+    logged = {json.loads(str(np.load(f, allow_pickle=True)["meta"]))["controller"]
+              for d in flights for f in itertools.islice(sorted(d.glob("*.npz")), 0, None, 50)}
+    fctrls = [c for c in ctrls if c in logged]
     md = [*tuning_table(Path(args.tuning), ctrls),
           *tuning_convergence(Path(args.tuning), ctrls, out), *part_a(rows, ctrls, out),
-          *pareto(rows, ctrls, out), *accel_bins(flights, ctrls, out),
+          *pareto(rows, ctrls, out), *accel_bins(flights, fctrls, out),
           *part_b(rows, ctrls, out),
-          *saturation(flights, ctrls, out), *paired(rows, ctrls),
+          *saturation(flights, fctrls, out), *paired(rows, ctrls),
           "Controller compute time per step (median): "
           + ", ".join(f"{c} {v:.3f} ms" for c, v in ms.items()) + ".",
           "", f"_{len(rows)} episodes, git {rows[0]['git']}, config {rows[0]['config_hash']}_"]
