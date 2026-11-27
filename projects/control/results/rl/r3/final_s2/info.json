@@ -1,0 +1,30 @@
+{
+  "run": "final_s2",
+  "hp": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      128,
+      128
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 2,
+  "randomize": false,
+  "steps": 3000000,
+  "wall_h": 2.2793408036231995,
+  "cpu_h": 4.558681607246399,
+  "steps_per_s": 365.60277954427943,
+  "rmse": 0.08908566848763833,
+  "smoothness": 0.00944497237928892,
+  "rmse_rel": 1.2479431243628334,
+  "smooth_rel": 8.347197542140504,
+  "crash_rate": 0.0,
+  "J": 3.7521023870049843
+}

@@ -1,0 +1,30 @@
+{
+  "run": "smoke_100000",
+  "hp": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      128,
+      128
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 0,
+  "randomize": false,
+  "steps": 100000,
+  "wall_h": 0.08229374428590139,
+  "cpu_h": 0.16458748857180278,
+  "steps_per_s": 337.54422063083456,
+  "rmse": 0.10204866052430295,
+  "smoothness": 0.0013878063628516297,
+  "rmse_rel": 1.5995074691877582,
+  "smooth_rel": 1.1706035801045653,
+  "crash_rate": 0.0,
+  "J": 1.9506885432191279
+}

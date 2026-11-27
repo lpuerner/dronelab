@@ -34,6 +34,8 @@ class EpisodeSpec:
     tags: dict = field(default_factory=dict)  # copied into the result row (e.g. scenario)
     speed_profile: str = "constant"  # "variable": speed is the maximum (surrogate data)
     dither: dict | None = None  # excitation on the commands, see dronelab.control.dither
+    gate_frames: bool = False  # autonomy: gate frames are obstacles, stop after the last gate
+    planner: dict | None = None  # autonomy: re-plan the course, see dronelab.autonomy.planner
 
 
 _BACKENDS: dict = {}
@@ -63,6 +65,10 @@ def run_spec(spec: EpisodeSpec) -> dict:
            "seed": spec.seed, "world": spec.world, "physics": physics,
            "speed_profile": spec.speed_profile, "dither": bool(spec.dither), **spec.tags}
     course = make_course(spec.family, spec.speed, spec.seed, speed_profile=spec.speed_profile)
+    if spec.planner:
+        from dronelab.autonomy.planner import plan_course
+
+        course = plan_course(course, **spec.planner)
     row.update({"feasible": course.feasible, "rejections": course.rejections,
                 **{f"course_{k}": v for k, v in course.difficulty.items()}})
     if not course.feasible:
@@ -75,7 +81,8 @@ def run_spec(spec: EpisodeSpec) -> dict:
         row.update({"crashed": 1.0, "error": str(exc)})
         return row
     noise = InitNoiseConfig(enabled=spec.init_noise)
-    traj = run_episode(be, ctrl, course, seed=spec.seed, init_noise=noise)
+    traj = run_episode(be, ctrl, course, seed=spec.seed, init_noise=noise,
+                       gate_frames=spec.gate_frames)
     row.update(compute_metrics(traj))
     row["crash_reason"] = traj.crash_reason
     if spec.log_path:

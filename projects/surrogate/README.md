@@ -4,7 +4,7 @@
 
 Part of [dronelab](../../README.md). Status: first round done (physics, physics + MLP, MLP). GRU variants and the controller-change test set T5 come later.
 
-The model is meant for model-predictive control (subproject 1, R4) and gate flight with MPPI (subproject 3). It therefore runs at the control rate (48 Hz) and has to be accurate over an MPC horizon of 20 steps (0.42 s). It also has to be fast for batches of hundreds of command sequences.
+The model is meant for model-predictive control (MPPI in subproject 1, R4) and later as the process model of a state estimator (subproject 5). It therefore runs at the control rate (48 Hz) and has to be accurate over an MPC horizon of 20 steps (0.42 s). It also has to be fast for batches of hundreds of command sequences.
 
 ## Setup
 
@@ -15,7 +15,7 @@ The model is meant for model-predictive control (subproject 1, R4) and gate flig
 * thrust loss in axial inflow;
 * a blade-flapping moment in forward flight.
 
-The physics prior below only knows the standard model, so it has a real model gap that the network has to learn. This follows variant C of the plan.
+The physics prior below only knows the standard model, so it has a real model gap that the network has to learn.
 
 **Task.** The model gets the state and the *commanded* rotor speeds and predicts the next state, 20.8 ms later.
 
@@ -178,12 +178,9 @@ For R4 this means: the MPC gets the same estimator, the hybrid with estimate is 
 
 The 5 physics substeps make up most of the cost of `phys` and `phys+mlp`. The timings vary by about ±20 % with the load of the laptop (an earlier run measured 92 / 122 / 40 ms).
 
-At 48 Hz a control step has 21 ms, so neither model is real-time for MPPI with 512 samples in eager PyTorch on this CPU. R4 has to reduce samples or substeps, or compile the rollout. Until then the trade-off stands at:
+At 48 Hz a control step has 21 ms, so in eager PyTorch neither model is real-time for MPPI with 512 samples on this CPU. The trade-off: `phys+mlp` is 2–4 times more accurate, `mlp` 3 times faster.
 
-*Update (R4.0):* the batch is overhead-bound (each torch op on 512 × 3 values costs 5–40 µs). Without gradients the physics step now runs as one numba loop (`src/dronelab/surrogate/fast.py`, same results to 1e-5). With all 5 substeps, 512 × 20 steps then take 9 ms for `phys (URDF)` and 35 ms for `phys+mlp`, where the network is now the main cost ([timing](../control/results/mppi/timing.md)). The table and trade-off above are the eager-PyTorch numbers:
-
-* `phys+mlp`: 2–4 times more accurate;
-* `mlp`: 3 times faster.
+For R4 the batch turned out to be overhead-bound (each torch op on 512 × 3 values costs 5–40 µs). Without gradients the physics step now runs as one numba loop (`src/dronelab/surrogate/fast.py`, same results to 1e-5). With all 5 substeps, 512 × 20 steps then take 9 ms for `phys (URDF)` and 35 ms for `phys+mlp`, where the network is now the main cost ([timing](../control/results/mppi/timing.md)). In closed loop MPPI with `phys+mlp` needs about 80 ms per control step, slower than real time on this laptop.
 
 ![accuracy vs compute](results/figures/accuracy_vs_compute.png)
 

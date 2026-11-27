@@ -1,0 +1,5 @@
+J: 1.6201746230252299
+model: projects/control/results/rl/r3/final_s0/best_model.zip
+run: final_s0
+steps: 2400000
+vecnormalize: projects/control/results/rl/r3/final_s0/best_vecnormalize.pkl

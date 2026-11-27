@@ -1,0 +1,30 @@
+{
+  "run": "search_lr1e-4",
+  "hp": {
+    "learning_rate": 0.0001,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      128,
+      128
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 0,
+  "randomize": false,
+  "steps": 1000000,
+  "wall_h": 0.8390212958388858,
+  "cpu_h": 1.6780425916777717,
+  "steps_per_s": 331.0735724533009,
+  "rmse": 0.060850090938110425,
+  "smoothness": 0.005221836071216589,
+  "rmse_rel": 0.5368111752023222,
+  "smooth_rel": 4.260029433916886,
+  "crash_rate": 0.0,
+  "J": 1.814820005377388
+}

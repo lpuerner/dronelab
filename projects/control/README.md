@@ -6,10 +6,10 @@ Part of [dronelab](../../README.md). All controllers fly the same randomised cou
 
 | Stage | Methods | Status |
 |---|---|---|
-| R1 | cascaded PID (reference: gym-pybullet-drones `DSLPIDControl` [1]), own PID, LQI – tuned and benchmarked in the `real` world | done |
-| R2 | INDI (incremental nonlinear dynamic inversion) | tuned (J 0.70 on validation), benchmark next |
-| R3 | learned controller: PPO policy (collective thrust + body rates) | planned |
-| R4 | sampling MPC (MPPI) with the learned dynamics model from subproject 2 | tuned, benchmark next |
+| R1 | cascaded PID (reference: gym-pybullet-drones `DSLPIDControl` [1]), own PID, LQI | tuned and benchmarked |
+| R2 | INDI (incremental nonlinear dynamic inversion), variant INDI-SG | tuned and benchmarked |
+| R3 | learned controller: PPO policy (collective thrust + body rates) | first round benchmarked, ablations running |
+| R4 | sampling MPC (MPPI) with the learned dynamics model from subproject 2 | tuned and benchmarked, ablations not yet flown |
 
 Disturbances: mass change (payload), constant wind + gusts, motor lag, sensor noise, drag + ground effect, combinations.
 
@@ -92,10 +92,11 @@ LQR is not part of R1 in the `real` world. To save tuning time (~1.5 CPU-h per c
 
 **Key findings (`real` world):**
 
-* **LQI is the most accurate controller at every speed:** 1.3 cm median RMSE at 1 m/s and 3.5 cm at 3 m/s, against 2.2 / 5.1 cm for the tuned PID. Paired on the same flights, LQI beats PID in 87 % of cases. The untuned DSL-PID anchor reaches 6.6 cm at 1 m/s and survives only 20 % of the flights at 3 m/s.
-* **The model gap costs accuracy:** in the ideal world the same controllers tracked at ~0.6 cm at 1 m/s (git history); with the extra aerodynamics and the motor lag it is 2–4× more.
-* **The integrator decides the robustness:** under constant wind (0.09 N) LQI stays at 4.2 cm on figure-eights, PID degrades to 15.8 cm (×8); with 30 % extra mass 6.3 against 12.1 cm.
-* **Motor lag is the hard limit:** 50 ms costs almost nothing, at 100 ms no controller finishes a figure-eight or gate course, and the strong combination is flown by nobody.
+* **INDI and LQI are the most accurate controllers.** Median RMSE at 1 m/s: INDI 1.1 cm, LQI 1.3 cm, tuned PID 2.2 cm; at 3 m/s 3.1, 3.5 and 5.1 cm. The untuned DSL-PID anchor reaches 6.6 cm at 1 m/s and survives only 20 % of the flights at 3 m/s.
+* **The model gap costs accuracy.** In the ideal world the same controllers tracked at about 0.6 cm at 1 m/s (git history); with the extra aerodynamics and the motor lag the error is 2–4 times larger.
+* **Constant disturbances need integral action or a measured disturbance.** Under 0.09 N wind on figure-eights, INDI stays at 3.1 cm and LQI at 4.2 cm, while PID degrades to 15.8 cm. With 30 % extra mass: INDI 4.1, LQI 6.3, PID 12.1 cm.
+* **Motor lag is the hard limit for the classical controllers.** 50 ms costs almost nothing; at 100 ms none of them finishes a figure-eight or gate course. MPPI (lag modelled in its rollout) flies all of them, PPO the gate course.
+* **MPPI and PPO do not beat INDI.** MPPI is about as accurate nominally (1.2 cm at 1 m/s) at about 80 ms per step, and loses accuracy under wind and payload. PPO is less accurate and less reliable (details in R3 and R4 below).
 
 ![gates at 1.5 m/s: 3D and side views](results/figures/gates_1.5ms_seed1000.png)
 
@@ -127,10 +128,11 @@ Median position RMSE [cm] of successful flights / success rate, over 4 families 
 | INDI-SG (tuned) | 0.2 / 100 % | 0.4 / 100 % | 1.1 / 100 % | 1.8 / 100 % | 2.1 / 100 % | 3.2 / 100 % |
 | MPPI-hybrid (tuned) | 1.2 / 100 % | 0.9 / 100 % | 1.2 / 100 % | 1.5 / 100 % | 2.0 / 100 % | 2.8 / 100 % |
 | MPPI-urdf (hybrid gains) | 1.6 / 100 % | 1.7 / 100 % | 2.4 / 100 % | 3.3 / 100 % | 4.1 / 100 % | 6.5 / 100 % |
+| PPO (best checkpoint) | 0.5 / 100 % | 0.9 / 100 % | 2.1 / 95 % | 4.1 / 95 % | 5.6 / 90 % | 4.8 / 50 % |
 
 Infeasible courses (rejected by the thrust/tilt check, not flown): 3 m/s: 10.
 
-Gate course – all gates passed (successful flights): DSL-PID 96 %; PID 100 %; LQI 100 %; INDI 100 %; INDI-SG 100 %; MPPI-hybrid 100 %; MPPI-urdf 100 %.
+Gate course – all gates passed (successful flights): DSL-PID 96 %; PID 100 %; LQI 100 %; INDI 100 %; INDI-SG 100 %; MPPI-hybrid 100 %; MPPI-urdf 100 %; PPO 100 %.
 
 ![speed sweep](results/benchmark/r1/speed_sweep.png)
 
@@ -152,82 +154,82 @@ Success rate and median RMSE [cm] of successful flights; in brackets the RMSE re
 
 <details><summary><b>hover</b></summary>
 
-| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf |
-|---|---|---|---|---|---|---|---|
-| nominal | 100 %, 14.6 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.3 (1.00) |
-| mass_0.8 | 100 %, 14.2 (0.97) | 100 %, 16.3 (1.11) | 100 %, 15.0 (0.98) | 100 %, 14.3 (0.99) | 100 %, 14.7 (0.96) | 100 %, 15.5 (0.89) | 100 %, 15.6 (0.90) |
-| mass_0.9 | 100 %, 14.3 (0.98) | 100 %, 15.1 (1.03) | 100 %, 15.0 (0.98) | 100 %, 14.4 (0.99) | 100 %, 15.0 (0.98) | 100 %, 16.4 (0.95) | 100 %, 16.4 (0.95) |
-| mass_1.1 | 100 %, 15.3 (1.04) | 100 %, 15.2 (1.03) | 100 %, 15.8 (1.03) | 100 %, 14.8 (1.02) | 100 %, 15.6 (1.02) | 100 %, 18.6 (1.07) | 100 %, 18.6 (1.08) |
-| mass_1.2 | 100 %, 16.1 (1.10) | 100 %, 16.4 (1.12) | 100 %, 16.5 (1.08) | 100 %, 15.2 (1.04) | 100 %, 15.9 (1.04) | 100 %, 20.5 (1.18) | 100 %, 20.5 (1.18) |
-| mass_1.3 | 100 %, 17.2 (1.18) | 100 %, 18.3 (1.24) | 100 %, 17.4 (1.13) | 100 %, 15.7 (1.08) | 100 %, 16.2 (1.06) | 100 %, 23.1 (1.33) | 100 %, 23.2 (1.34) |
-| wind_0.03 | 100 %, 15.5 (1.06) | 100 %, 15.5 (1.06) | 100 %, 15.4 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.4 (1.01) |
-| wind_0.06 | 100 %, 17.8 (1.21) | 100 %, 17.8 (1.21) | 100 %, 15.5 (1.01) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 18.3 (1.06) | 100 %, 18.2 (1.05) |
-| wind_0.09 | 100 %, 21.0 (1.44) | 100 %, 21.1 (1.43) | 100 %, 15.6 (1.02) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 24.5 (1.41) | 100 %, 24.1 (1.39) |
-| gust_0.01 | 100 %, 14.9 (1.02) | 100 %, 14.8 (1.01) | 100 %, 15.4 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.2 (0.99) | 100 %, 17.2 (0.99) |
-| gust_0.02 | 100 %, 15.7 (1.07) | 100 %, 15.5 (1.05) | 100 %, 15.6 (1.02) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.6 (1.01) | 100 %, 17.5 (1.01) |
-| gust_0.04 | 100 %, 18.4 (1.25) | 100 %, 18.1 (1.23) | 100 %, 16.5 (1.08) | 100 %, 14.6 (1.00) | 100 %, 15.6 (1.02) | 100 %, 24.4 (1.40) | 100 %, 24.6 (1.42) |
-| motor_0.05 | 100 %, 15.1 (1.03) | 100 %, 15.1 (1.03) | 100 %, 15.7 (1.03) | 100 %, 15.0 (1.03) | 100 %, 15.4 (1.00) | 100 %, 17.8 (1.03) | 100 %, 17.8 (1.03) |
-| motor_0.1 | 100 %, 15.6 (1.06) | 100 %, 15.7 (1.07) | 100 %, 16.3 (1.06) | 100 %, 15.6 (1.07) | 100 %, 15.5 (1.01) | 100 %, 18.4 (1.06) | 100 %, 18.4 (1.07) |
-| noise_low | 100 %, 14.7 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.6 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.3 (1.00) |
-| noise_mid | 100 %, 14.9 (1.02) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.6 (1.01) | 100 %, 15.2 (1.00) | 100 %, 17.6 (1.01) | 100 %, 17.7 (1.02) |
-| noise_high | 0 %, – | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 15.2 (1.04) | 100 %, 15.2 (0.99) | 100 %, 17.8 (1.02) | 100 %, 18.2 (1.05) |
-| ideal | 100 %, 14.2 (0.97) | 100 %, 14.1 (0.96) | 100 %, 14.9 (0.97) | 100 %, 14.4 (0.99) | 100 %, 15.1 (0.98) | 100 %, 17.1 (0.99) | 100 %, 17.1 (0.99) |
-| combo_mid | 100 %, 19.6 (1.34) | 100 %, 19.1 (1.30) | 100 %, 16.1 (1.05) | 100 %, 14.9 (1.03) | 100 %, 15.7 (1.02) | 100 %, 23.4 (1.35) | 100 %, 24.9 (1.44) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 49.9 (2.87) | 80 %, 51.0 (2.95) |
+| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf | PPO |
+|---|---|---|---|---|---|---|---|---|
+| nominal | 100 %, 14.6 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.3 (1.00) | 100 %, 14.6 (1.00) |
+| mass_0.8 | 100 %, 14.2 (0.97) | 100 %, 16.3 (1.11) | 100 %, 15.0 (0.98) | 100 %, 14.3 (0.99) | 100 %, 14.7 (0.96) | 100 %, 15.5 (0.89) | 100 %, 15.6 (0.90) | 100 %, 13.9 (0.95) |
+| mass_0.9 | 100 %, 14.3 (0.98) | 100 %, 15.1 (1.03) | 100 %, 15.0 (0.98) | 100 %, 14.4 (0.99) | 100 %, 15.0 (0.98) | 100 %, 16.4 (0.95) | 100 %, 16.4 (0.95) | 100 %, 14.1 (0.96) |
+| mass_1.1 | 100 %, 15.3 (1.04) | 100 %, 15.2 (1.03) | 100 %, 15.8 (1.03) | 100 %, 14.8 (1.02) | 100 %, 15.6 (1.02) | 100 %, 18.6 (1.07) | 100 %, 18.6 (1.08) | 100 %, 15.5 (1.06) |
+| mass_1.2 | 100 %, 16.1 (1.10) | 100 %, 16.4 (1.12) | 100 %, 16.5 (1.08) | 100 %, 15.2 (1.04) | 100 %, 15.9 (1.04) | 100 %, 20.5 (1.18) | 100 %, 20.5 (1.18) | 100 %, 16.6 (1.13) |
+| mass_1.3 | 100 %, 17.2 (1.18) | 100 %, 18.3 (1.24) | 100 %, 17.4 (1.13) | 100 %, 15.7 (1.08) | 100 %, 16.2 (1.06) | 100 %, 23.1 (1.33) | 100 %, 23.2 (1.34) | 100 %, 17.8 (1.22) |
+| wind_0.03 | 100 %, 15.5 (1.06) | 100 %, 15.5 (1.06) | 100 %, 15.4 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.4 (1.01) | 100 %, 15.4 (1.05) |
+| wind_0.06 | 100 %, 17.8 (1.21) | 100 %, 17.8 (1.21) | 100 %, 15.5 (1.01) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 18.3 (1.06) | 100 %, 18.2 (1.05) | 100 %, 17.4 (1.19) |
+| wind_0.09 | 100 %, 21.0 (1.44) | 100 %, 21.1 (1.43) | 100 %, 15.6 (1.02) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 24.5 (1.41) | 100 %, 24.1 (1.39) | 100 %, 20.5 (1.40) |
+| gust_0.01 | 100 %, 14.9 (1.02) | 100 %, 14.8 (1.01) | 100 %, 15.4 (1.00) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.2 (0.99) | 100 %, 17.2 (0.99) | 100 %, 14.5 (0.99) |
+| gust_0.02 | 100 %, 15.7 (1.07) | 100 %, 15.5 (1.05) | 100 %, 15.6 (1.02) | 100 %, 14.5 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.6 (1.01) | 100 %, 17.5 (1.01) | 100 %, 14.8 (1.01) |
+| gust_0.04 | 100 %, 18.4 (1.25) | 100 %, 18.1 (1.23) | 100 %, 16.5 (1.08) | 100 %, 14.6 (1.00) | 100 %, 15.6 (1.02) | 100 %, 24.4 (1.40) | 100 %, 24.6 (1.42) | 100 %, 16.4 (1.12) |
+| motor_0.05 | 100 %, 15.1 (1.03) | 100 %, 15.1 (1.03) | 100 %, 15.7 (1.03) | 100 %, 15.0 (1.03) | 100 %, 15.4 (1.00) | 100 %, 17.8 (1.03) | 100 %, 17.8 (1.03) | 100 %, 15.2 (1.04) |
+| motor_0.1 | 100 %, 15.6 (1.06) | 100 %, 15.7 (1.07) | 100 %, 16.3 (1.06) | 100 %, 15.6 (1.07) | 100 %, 15.5 (1.01) | 100 %, 18.4 (1.06) | 100 %, 18.4 (1.07) | 100 %, 16.3 (1.11) |
+| noise_low | 100 %, 14.7 (1.00) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.6 (1.00) | 100 %, 15.3 (1.00) | 100 %, 17.4 (1.00) | 100 %, 17.3 (1.00) | 100 %, 14.6 (1.00) |
+| noise_mid | 100 %, 14.9 (1.02) | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 14.6 (1.01) | 100 %, 15.2 (1.00) | 100 %, 17.6 (1.01) | 100 %, 17.7 (1.02) | 100 %, 14.6 (1.00) |
+| noise_high | 0 %, – | 100 %, 14.7 (1.00) | 100 %, 15.3 (1.00) | 100 %, 15.2 (1.04) | 100 %, 15.2 (0.99) | 100 %, 17.8 (1.02) | 100 %, 18.2 (1.05) | 100 %, 14.7 (1.00) |
+| ideal | 100 %, 14.2 (0.97) | 100 %, 14.1 (0.96) | 100 %, 14.9 (0.97) | 100 %, 14.4 (0.99) | 100 %, 15.1 (0.98) | 100 %, 17.1 (0.99) | 100 %, 17.1 (0.99) | 100 %, 14.3 (0.98) |
+| combo_mid | 100 %, 19.6 (1.34) | 100 %, 19.1 (1.30) | 100 %, 16.1 (1.05) | 100 %, 14.9 (1.03) | 100 %, 15.7 (1.02) | 100 %, 23.4 (1.35) | 100 %, 24.9 (1.44) | 100 %, 17.7 (1.21) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 49.9 (2.87) | 80 %, 51.0 (2.95) | 20 %, 18.5 (1.26) |
 
 </details>
 
 <details><summary><b>figure8</b></summary>
 
-| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf |
-|---|---|---|---|---|---|---|---|
-| nominal | 100 %, 10.7 (1.00) | 100 %, 1.9 (1.00) | 100 %, 2.6 (1.00) | 100 %, 3.0 (1.00) | 100 %, 2.9 (1.00) | 100 %, 1.9 (1.00) | 100 %, 3.0 (1.00) |
-| mass_0.8 | 100 %, 9.3 (0.87) | 100 %, 7.6 (3.93) | 100 %, 4.3 (1.61) | 100 %, 2.3 (0.77) | 100 %, 2.3 (0.78) | 100 %, 4.8 (2.54) | 100 %, 5.2 (1.75) |
-| mass_0.9 | 100 %, 9.9 (0.92) | 100 %, 4.0 (2.08) | 100 %, 3.1 (1.16) | 100 %, 2.6 (0.88) | 100 %, 2.5 (0.87) | 100 %, 2.3 (1.21) | 100 %, 3.4 (1.14) |
-| mass_1.1 | 100 %, 12.0 (1.12) | 100 %, 4.6 (2.37) | 100 %, 3.3 (1.26) | 100 %, 3.3 (1.12) | 100 %, 3.4 (1.16) | 100 %, 3.4 (1.79) | 100 %, 3.2 (1.06) |
-| mass_1.2 | 100 %, 13.7 (1.28) | 100 %, 8.3 (4.28) | 100 %, 4.7 (1.76) | 100 %, 3.7 (1.25) | 100 %, 3.9 (1.33) | 100 %, 11.9 (6.28) | 100 %, 9.3 (3.11) |
-| mass_1.3 | 100 %, 15.6 (1.45) | 100 %, 12.1 (6.24) | 100 %, 6.3 (2.37) | 100 %, 4.1 (1.37) | 100 %, 4.4 (1.52) | 100 %, 30.0 (15.77) | 100 %, 27.2 (9.13) |
-| wind_0.03 | 100 %, 12.0 (1.12) | 100 %, 5.5 (2.83) | 100 %, 2.9 (1.11) | 100 %, 3.0 (1.00) | 100 %, 2.9 (1.01) | 100 %, 2.3 (1.21) | 100 %, 3.3 (1.12) |
-| wind_0.06 | 100 %, 14.6 (1.36) | 100 %, 10.5 (5.45) | 100 %, 3.5 (1.33) | 100 %, 3.0 (1.01) | 100 %, 3.0 (1.05) | 100 %, 5.8 (3.08) | 100 %, 4.8 (1.60) |
-| wind_0.09 | 100 %, 18.5 (1.72) | 100 %, 15.8 (8.19) | 100 %, 4.2 (1.60) | 100 %, 3.1 (1.04) | 100 %, 3.3 (1.13) | 100 %, 14.7 (7.74) | 100 %, 16.5 (5.53) |
-| gust_0.01 | 100 %, 10.9 (1.01) | 100 %, 3.0 (1.55) | 100 %, 3.0 (1.15) | 100 %, 2.9 (0.99) | 100 %, 2.9 (1.00) | 100 %, 2.6 (1.38) | 100 %, 3.3 (1.11) |
-| gust_0.02 | 100 %, 11.0 (1.03) | 100 %, 4.8 (2.50) | 100 %, 4.1 (1.55) | 100 %, 3.0 (1.00) | 100 %, 3.1 (1.07) | 100 %, 6.3 (3.31) | 100 %, 6.6 (2.20) |
-| gust_0.04 | 100 %, 14.7 (1.37) | 100 %, 9.2 (4.78) | 100 %, 6.2 (2.33) | 100 %, 3.4 (1.13) | 100 %, 4.4 (1.50) | 100 %, 22.9 (12.06) | 100 %, 20.4 (6.85) |
-| motor_0.05 | 100 %, 11.5 (1.07) | 100 %, 1.9 (0.98) | 100 %, 3.2 (1.21) | 100 %, 2.9 (0.99) | 100 %, 2.9 (0.99) | 100 %, 1.9 (1.00) | 100 %, 3.0 (1.01) |
-| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 100 %, 2.2 (1.16) | 100 %, 3.2 (1.08) |
-| noise_low | 100 %, 10.8 (1.01) | 100 %, 1.9 (0.99) | 100 %, 2.6 (0.98) | 100 %, 3.0 (1.00) | 100 %, 2.9 (0.99) | 100 %, 1.9 (1.01) | 100 %, 3.0 (1.02) |
-| noise_mid | 80 %, 11.4 (1.06) | 100 %, 2.0 (1.01) | 100 %, 2.5 (0.96) | 100 %, 3.3 (1.11) | 100 %, 2.9 (1.00) | 100 %, 4.1 (2.18) | 100 %, 5.2 (1.73) |
-| noise_high | 0 %, – | 100 %, 2.2 (1.12) | 100 %, 2.5 (0.95) | 100 %, 5.6 (1.88) | 100 %, 3.1 (1.07) | 100 %, 5.6 (2.94) | 100 %, 5.7 (1.93) |
-| ideal | 100 %, 11.8 (1.10) | 100 %, 2.5 (1.31) | 100 %, 3.2 (1.21) | 100 %, 3.0 (1.03) | 100 %, 3.0 (1.05) | 100 %, 1.8 (0.97) | 100 %, 2.0 (0.66) |
-| combo_mid | 80 %, 16.2 (1.51) | 100 %, 12.0 (6.18) | 100 %, 4.6 (1.73) | 100 %, 3.9 (1.32) | 100 %, 4.0 (1.39) | 100 %, 20.7 (10.87) | 100 %, 20.2 (6.76) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 52.4 (27.58) | 80 %, 42.5 (14.25) |
+| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf | PPO |
+|---|---|---|---|---|---|---|---|---|
+| nominal | 100 %, 10.7 (1.00) | 100 %, 1.9 (1.00) | 100 %, 2.6 (1.00) | 100 %, 3.0 (1.00) | 100 %, 2.9 (1.00) | 100 %, 1.9 (1.00) | 100 %, 3.0 (1.00) | 80 %, 3.8 (1.00) |
+| mass_0.8 | 100 %, 9.3 (0.87) | 100 %, 7.6 (3.93) | 100 %, 4.3 (1.61) | 100 %, 2.3 (0.77) | 100 %, 2.3 (0.78) | 100 %, 4.8 (2.54) | 100 %, 5.2 (1.75) | 100 %, 6.0 (1.58) |
+| mass_0.9 | 100 %, 9.9 (0.92) | 100 %, 4.0 (2.08) | 100 %, 3.1 (1.16) | 100 %, 2.6 (0.88) | 100 %, 2.5 (0.87) | 100 %, 2.3 (1.21) | 100 %, 3.4 (1.14) | 100 %, 5.6 (1.49) |
+| mass_1.1 | 100 %, 12.0 (1.12) | 100 %, 4.6 (2.37) | 100 %, 3.3 (1.26) | 100 %, 3.3 (1.12) | 100 %, 3.4 (1.16) | 100 %, 3.4 (1.79) | 100 %, 3.2 (1.06) | 80 %, 4.3 (1.13) |
+| mass_1.2 | 100 %, 13.7 (1.28) | 100 %, 8.3 (4.28) | 100 %, 4.7 (1.76) | 100 %, 3.7 (1.25) | 100 %, 3.9 (1.33) | 100 %, 11.9 (6.28) | 100 %, 9.3 (3.11) | 80 %, 4.8 (1.26) |
+| mass_1.3 | 100 %, 15.6 (1.45) | 100 %, 12.1 (6.24) | 100 %, 6.3 (2.37) | 100 %, 4.1 (1.37) | 100 %, 4.4 (1.52) | 100 %, 30.0 (15.77) | 100 %, 27.2 (9.13) | 80 %, 6.7 (1.77) |
+| wind_0.03 | 100 %, 12.0 (1.12) | 100 %, 5.5 (2.83) | 100 %, 2.9 (1.11) | 100 %, 3.0 (1.00) | 100 %, 2.9 (1.01) | 100 %, 2.3 (1.21) | 100 %, 3.3 (1.12) | 100 %, 6.1 (1.61) |
+| wind_0.06 | 100 %, 14.6 (1.36) | 100 %, 10.5 (5.45) | 100 %, 3.5 (1.33) | 100 %, 3.0 (1.01) | 100 %, 3.0 (1.05) | 100 %, 5.8 (3.08) | 100 %, 4.8 (1.60) | 100 %, 9.0 (2.37) |
+| wind_0.09 | 100 %, 18.5 (1.72) | 100 %, 15.8 (8.19) | 100 %, 4.2 (1.60) | 100 %, 3.1 (1.04) | 100 %, 3.3 (1.13) | 100 %, 14.7 (7.74) | 100 %, 16.5 (5.53) | 40 %, 21.6 (5.71) |
+| gust_0.01 | 100 %, 10.9 (1.01) | 100 %, 3.0 (1.55) | 100 %, 3.0 (1.15) | 100 %, 2.9 (0.99) | 100 %, 2.9 (1.00) | 100 %, 2.6 (1.38) | 100 %, 3.3 (1.11) | 80 %, 4.1 (1.09) |
+| gust_0.02 | 100 %, 11.0 (1.03) | 100 %, 4.8 (2.50) | 100 %, 4.1 (1.55) | 100 %, 3.0 (1.00) | 100 %, 3.1 (1.07) | 100 %, 6.3 (3.31) | 100 %, 6.6 (2.20) | 80 %, 5.4 (1.43) |
+| gust_0.04 | 100 %, 14.7 (1.37) | 100 %, 9.2 (4.78) | 100 %, 6.2 (2.33) | 100 %, 3.4 (1.13) | 100 %, 4.4 (1.50) | 100 %, 22.9 (12.06) | 100 %, 20.4 (6.85) | 40 %, 9.4 (2.49) |
+| motor_0.05 | 100 %, 11.5 (1.07) | 100 %, 1.9 (0.98) | 100 %, 3.2 (1.21) | 100 %, 2.9 (0.99) | 100 %, 2.9 (0.99) | 100 %, 1.9 (1.00) | 100 %, 3.0 (1.01) | 80 %, 3.8 (1.01) |
+| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 100 %, 2.2 (1.16) | 100 %, 3.2 (1.08) | 60 %, 3.0 (0.79) |
+| noise_low | 100 %, 10.8 (1.01) | 100 %, 1.9 (0.99) | 100 %, 2.6 (0.98) | 100 %, 3.0 (1.00) | 100 %, 2.9 (0.99) | 100 %, 1.9 (1.01) | 100 %, 3.0 (1.02) | 80 %, 3.8 (0.99) |
+| noise_mid | 80 %, 11.4 (1.06) | 100 %, 2.0 (1.01) | 100 %, 2.5 (0.96) | 100 %, 3.3 (1.11) | 100 %, 2.9 (1.00) | 100 %, 4.1 (2.18) | 100 %, 5.2 (1.73) | 80 %, 3.8 (1.00) |
+| noise_high | 0 %, – | 100 %, 2.2 (1.12) | 100 %, 2.5 (0.95) | 100 %, 5.6 (1.88) | 100 %, 3.1 (1.07) | 100 %, 5.6 (2.94) | 100 %, 5.7 (1.93) | 80 %, 3.8 (1.01) |
+| ideal | 100 %, 11.8 (1.10) | 100 %, 2.5 (1.31) | 100 %, 3.2 (1.21) | 100 %, 3.0 (1.03) | 100 %, 3.0 (1.05) | 100 %, 1.8 (0.97) | 100 %, 2.0 (0.66) | 80 %, 5.0 (1.32) |
+| combo_mid | 80 %, 16.2 (1.51) | 100 %, 12.0 (6.18) | 100 %, 4.6 (1.73) | 100 %, 3.9 (1.32) | 100 %, 4.0 (1.39) | 100 %, 20.7 (10.87) | 100 %, 20.2 (6.76) | 60 %, 8.9 (2.35) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 52.4 (27.58) | 80 %, 42.5 (14.25) | 0 %, – |
 
 </details>
 
 <details><summary><b>gates</b></summary>
 
-| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf |
-|---|---|---|---|---|---|---|---|
-| nominal | 100 %, 6.6 (1.00) | 100 %, 2.3 (1.00) | 100 %, 1.4 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.2 (1.00) | 100 %, 2.4 (1.00) |
-| mass_0.8 | 100 %, 6.4 (0.98) | 100 %, 6.3 (2.69) | 100 %, 3.4 (2.48) | 100 %, 0.8 (0.73) | 100 %, 0.8 (0.71) | 100 %, 3.4 (2.74) | 100 %, 3.8 (1.60) |
-| mass_0.9 | 100 %, 6.1 (0.94) | 100 %, 3.6 (1.53) | 100 %, 2.0 (1.50) | 100 %, 1.0 (0.86) | 100 %, 0.9 (0.81) | 100 %, 1.5 (1.25) | 100 %, 2.6 (1.10) |
-| mass_1.1 | 100 %, 7.4 (1.13) | 100 %, 4.0 (1.73) | 100 %, 2.1 (1.57) | 100 %, 1.3 (1.15) | 100 %, 1.4 (1.25) | 100 %, 1.7 (1.37) | 100 %, 2.5 (1.04) |
-| mass_1.2 | 100 %, 8.6 (1.31) | 100 %, 6.8 (2.92) | 100 %, 3.5 (2.57) | 100 %, 1.5 (1.31) | 100 %, 1.7 (1.50) | 100 %, 4.2 (3.42) | 100 %, 4.3 (1.82) |
-| mass_1.3 | 100 %, 10.3 (1.56) | 100 %, 9.8 (4.22) | 100 %, 5.0 (3.68) | 100 %, 1.7 (1.47) | 100 %, 2.0 (1.79) | 100 %, 16.5 (13.41) | 100 %, 17.0 (7.15) |
-| wind_0.03 | 100 %, 7.3 (1.12) | 100 %, 4.8 (2.06) | 100 %, 1.5 (1.07) | 100 %, 1.1 (1.01) | 100 %, 1.2 (1.03) | 100 %, 1.8 (1.45) | 100 %, 2.6 (1.08) |
-| wind_0.06 | 100 %, 9.6 (1.46) | 100 %, 9.3 (4.00) | 100 %, 1.9 (1.39) | 100 %, 1.2 (1.05) | 100 %, 1.3 (1.14) | 100 %, 3.2 (2.59) | 100 %, 3.5 (1.48) |
-| wind_0.09 | 100 %, 12.9 (1.97) | 100 %, 14.4 (6.16) | 100 %, 2.4 (1.81) | 100 %, 1.3 (1.13) | 100 %, 1.5 (1.32) | 100 %, 6.9 (5.59) | 100 %, 7.3 (3.06) |
-| gust_0.01 | 100 %, 7.0 (1.07) | 100 %, 3.4 (1.44) | 100 %, 2.1 (1.58) | 100 %, 1.2 (1.05) | 100 %, 1.5 (1.29) | 100 %, 2.3 (1.89) | 100 %, 3.0 (1.28) |
-| gust_0.02 | 100 %, 8.5 (1.29) | 100 %, 5.2 (2.24) | 100 %, 3.6 (2.65) | 100 %, 1.6 (1.38) | 100 %, 2.1 (1.89) | 100 %, 5.1 (4.12) | 100 %, 5.4 (2.29) |
-| gust_0.04 | 100 %, 12.8 (1.95) | 100 %, 10.2 (4.40) | 100 %, 6.8 (5.02) | 100 %, 2.6 (2.29) | 100 %, 3.9 (3.49) | 100 %, 15.2 (12.30) | 100 %, 22.7 (9.58) |
-| motor_0.05 | 100 %, 6.7 (1.02) | 100 %, 2.3 (0.98) | 100 %, 1.3 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.2 (1.01) | 100 %, 2.4 (1.01) |
-| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 100 %, 1.4 (1.16) | 100 %, 2.4 (1.00) |
-| noise_low | 100 %, 7.2 (1.10) | 100 %, 2.4 (1.02) | 100 %, 1.4 (1.04) | 100 %, 1.2 (1.05) | 100 %, 1.2 (1.03) | 100 %, 1.4 (1.16) | 100 %, 2.4 (1.01) |
-| noise_mid | 100 %, 8.8 (1.34) | 100 %, 2.4 (1.03) | 100 %, 1.5 (1.11) | 100 %, 1.9 (1.63) | 100 %, 1.3 (1.12) | 100 %, 4.6 (3.69) | 100 %, 6.0 (2.53) |
-| noise_high | 0 %, – | 100 %, 2.5 (1.07) | 100 %, 1.7 (1.23) | 100 %, 4.8 (4.19) | 100 %, 1.7 (1.51) | 100 %, 8.3 (6.71) | 100 %, 9.0 (3.80) |
-| ideal | 100 %, 6.1 (0.93) | 100 %, 1.0 (0.41) | 100 %, 1.4 (1.02) | 100 %, 1.2 (1.02) | 100 %, 1.1 (1.02) | 100 %, 1.7 (1.41) | 100 %, 1.2 (0.52) |
-| combo_mid | 100 %, 13.3 (2.03) | 100 %, 11.3 (4.85) | 100 %, 3.6 (2.65) | 100 %, 2.2 (1.93) | 100 %, 2.5 (2.20) | 100 %, 14.2 (11.47) | 100 %, 12.8 (5.41) |
-| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 49.8 (40.34) | 60 %, 51.0 (21.49) |
+| Scenario | DSL-PID | PID | LQI | INDI | INDI-SG | MPPI-hybrid | MPPI-urdf | PPO |
+|---|---|---|---|---|---|---|---|---|
+| nominal | 100 %, 6.6 (1.00) | 100 %, 2.3 (1.00) | 100 %, 1.4 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.2 (1.00) | 100 %, 2.4 (1.00) | 100 %, 2.7 (1.00) |
+| mass_0.8 | 100 %, 6.4 (0.98) | 100 %, 6.3 (2.69) | 100 %, 3.4 (2.48) | 100 %, 0.8 (0.73) | 100 %, 0.8 (0.71) | 100 %, 3.4 (2.74) | 100 %, 3.8 (1.60) | 100 %, 3.5 (1.33) |
+| mass_0.9 | 100 %, 6.1 (0.94) | 100 %, 3.6 (1.53) | 100 %, 2.0 (1.50) | 100 %, 1.0 (0.86) | 100 %, 0.9 (0.81) | 100 %, 1.5 (1.25) | 100 %, 2.6 (1.10) | 100 %, 3.0 (1.11) |
+| mass_1.1 | 100 %, 7.4 (1.13) | 100 %, 4.0 (1.73) | 100 %, 2.1 (1.57) | 100 %, 1.3 (1.15) | 100 %, 1.4 (1.25) | 100 %, 1.7 (1.37) | 100 %, 2.5 (1.04) | 100 %, 2.7 (1.02) |
+| mass_1.2 | 100 %, 8.6 (1.31) | 100 %, 6.8 (2.92) | 100 %, 3.5 (2.57) | 100 %, 1.5 (1.31) | 100 %, 1.7 (1.50) | 100 %, 4.2 (3.42) | 100 %, 4.3 (1.82) | 100 %, 3.1 (1.17) |
+| mass_1.3 | 100 %, 10.3 (1.56) | 100 %, 9.8 (4.22) | 100 %, 5.0 (3.68) | 100 %, 1.7 (1.47) | 100 %, 2.0 (1.79) | 100 %, 16.5 (13.41) | 100 %, 17.0 (7.15) | 100 %, 4.1 (1.52) |
+| wind_0.03 | 100 %, 7.3 (1.12) | 100 %, 4.8 (2.06) | 100 %, 1.5 (1.07) | 100 %, 1.1 (1.01) | 100 %, 1.2 (1.03) | 100 %, 1.8 (1.45) | 100 %, 2.6 (1.08) | 100 %, 5.2 (1.95) |
+| wind_0.06 | 100 %, 9.6 (1.46) | 100 %, 9.3 (4.00) | 100 %, 1.9 (1.39) | 100 %, 1.2 (1.05) | 100 %, 1.3 (1.14) | 100 %, 3.2 (2.59) | 100 %, 3.5 (1.48) | 100 %, 8.6 (3.22) |
+| wind_0.09 | 100 %, 12.9 (1.97) | 100 %, 14.4 (6.16) | 100 %, 2.4 (1.81) | 100 %, 1.3 (1.13) | 100 %, 1.5 (1.32) | 100 %, 6.9 (5.59) | 100 %, 7.3 (3.06) | 80 %, 13.3 (5.01) |
+| gust_0.01 | 100 %, 7.0 (1.07) | 100 %, 3.4 (1.44) | 100 %, 2.1 (1.58) | 100 %, 1.2 (1.05) | 100 %, 1.5 (1.29) | 100 %, 2.3 (1.89) | 100 %, 3.0 (1.28) | 100 %, 2.9 (1.11) |
+| gust_0.02 | 100 %, 8.5 (1.29) | 100 %, 5.2 (2.24) | 100 %, 3.6 (2.65) | 100 %, 1.6 (1.38) | 100 %, 2.1 (1.89) | 100 %, 5.1 (4.12) | 100 %, 5.4 (2.29) | 100 %, 4.2 (1.59) |
+| gust_0.04 | 100 %, 12.8 (1.95) | 100 %, 10.2 (4.40) | 100 %, 6.8 (5.02) | 100 %, 2.6 (2.29) | 100 %, 3.9 (3.49) | 100 %, 15.2 (12.30) | 100 %, 22.7 (9.58) | 40 %, 8.0 (3.02) |
+| motor_0.05 | 100 %, 6.7 (1.02) | 100 %, 2.3 (0.98) | 100 %, 1.3 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.1 (1.00) | 100 %, 1.2 (1.01) | 100 %, 2.4 (1.01) | 100 %, 2.7 (1.02) |
+| motor_0.1 | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 100 %, 1.4 (1.16) | 100 %, 2.4 (1.00) | 100 %, 3.1 (1.18) |
+| noise_low | 100 %, 7.2 (1.10) | 100 %, 2.4 (1.02) | 100 %, 1.4 (1.04) | 100 %, 1.2 (1.05) | 100 %, 1.2 (1.03) | 100 %, 1.4 (1.16) | 100 %, 2.4 (1.01) | 100 %, 2.6 (0.98) |
+| noise_mid | 100 %, 8.8 (1.34) | 100 %, 2.4 (1.03) | 100 %, 1.5 (1.11) | 100 %, 1.9 (1.63) | 100 %, 1.3 (1.12) | 100 %, 4.6 (3.69) | 100 %, 6.0 (2.53) | 100 %, 2.6 (0.97) |
+| noise_high | 0 %, – | 100 %, 2.5 (1.07) | 100 %, 1.7 (1.23) | 100 %, 4.8 (4.19) | 100 %, 1.7 (1.51) | 100 %, 8.3 (6.71) | 100 %, 9.0 (3.80) | 100 %, 2.7 (1.01) |
+| ideal | 100 %, 6.1 (0.93) | 100 %, 1.0 (0.41) | 100 %, 1.4 (1.02) | 100 %, 1.2 (1.02) | 100 %, 1.1 (1.02) | 100 %, 1.7 (1.41) | 100 %, 1.2 (0.52) | 100 %, 3.2 (1.21) |
+| combo_mid | 100 %, 13.3 (2.03) | 100 %, 11.3 (4.85) | 100 %, 3.6 (2.65) | 100 %, 2.2 (1.93) | 100 %, 2.5 (2.20) | 100 %, 14.2 (11.47) | 100 %, 12.8 (5.41) | 80 %, 8.8 (3.30) |
+| combo_strong | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 0 %, – | 60 %, 49.8 (40.34) | 60 %, 51.0 (21.49) | 0 %, – |
 
 </details>
 
@@ -263,49 +265,118 @@ Hover and path courses are tested separately because their RMSE scales differ.
 | hover | dsl_pid vs indi_sg | 95 | -0.11 | 54 % | 6.1e-01 |
 | hover | dsl_pid vs mppi_hybrid | 95 | -2.66 | 94 % | 3.5e-15 |
 | hover | dsl_pid vs mppi_urdf | 95 | -2.65 | 95 % | 3.8e-15 |
+| hover | dsl_pid vs ppo | 95 | +0.24 | 43 % | 1.4e-01 |
 | hover | pid vs lqi | 100 | -0.09 | 57 % | 2.8e-01 |
 | hover | pid vs indi | 100 | +0.60 | 15 % | 4.2e-13 |
 | hover | pid vs indi_sg | 100 | +0.07 | 47 % | 1.5e-02 |
 | hover | pid vs mppi_hybrid | 100 | -2.62 | 90 % | 4.0e-14 |
 | hover | pid vs mppi_urdf | 100 | -2.63 | 90 % | 3.8e-14 |
+| hover | pid vs ppo | 100 | +0.46 | 38 % | 4.3e-03 |
 | hover | lqi vs indi | 100 | +0.88 | 7 % | 3.4e-16 |
 | hover | lqi vs indi_sg | 100 | +0.24 | 28 % | 2.2e-06 |
 | hover | lqi vs mppi_hybrid | 100 | -2.30 | 99 % | 4.4e-18 |
 | hover | lqi vs mppi_urdf | 100 | -2.30 | 99 % | 4.3e-18 |
+| hover | lqi vs ppo | 100 | +0.32 | 32 % | 1.1e-01 |
 | hover | indi vs indi_sg | 100 | -0.63 | 94 % | 2.0e-16 |
 | hover | indi vs mppi_hybrid | 100 | -3.21 | 99 % | 4.0e-18 |
 | hover | indi vs mppi_urdf | 100 | -3.22 | 99 % | 4.0e-18 |
+| hover | indi vs ppo | 100 | -0.68 | 70 % | 5.2e-07 |
 | hover | indi_sg vs mppi_hybrid | 100 | -2.58 | 99 % | 4.0e-18 |
 | hover | indi_sg vs mppi_urdf | 100 | -2.57 | 99 % | 4.0e-18 |
+| hover | indi_sg vs ppo | 100 | +0.07 | 48 % | 4.2e-01 |
 | hover | mppi_hybrid vs mppi_urdf | 102 | -0.01 | 53 % | 5.2e-01 |
+| hover | mppi_hybrid vs ppo | 100 | +2.56 | 4 % | 6.7e-17 |
+| hover | mppi_urdf vs ppo | 101 | +2.54 | 4 % | 5.5e-17 |
 | path courses | dsl_pid vs pid | 267 | +4.10 | 4 % | 5.7e-44 |
 | path courses | dsl_pid vs lqi | 267 | +6.47 | 0 % | 1.5e-45 |
 | path courses | dsl_pid vs indi | 267 | +7.29 | 0 % | 1.5e-45 |
 | path courses | dsl_pid vs indi_sg | 267 | +7.27 | 0 % | 1.5e-45 |
 | path courses | dsl_pid vs mppi_hybrid | 267 | +5.21 | 18 % | 2.9e-25 |
 | path courses | dsl_pid vs mppi_urdf | 267 | +4.33 | 18 % | 2.7e-23 |
+| path courses | dsl_pid vs ppo | 242 | +4.38 | 4 % | 8.0e-37 |
 | path courses | pid vs lqi | 290 | +1.00 | 13 % | 7.9e-38 |
 | path courses | pid vs indi | 290 | +1.27 | 17 % | 5.2e-30 |
 | path courses | pid vs indi_sg | 290 | +1.23 | 14 % | 1.0e-35 |
 | path courses | pid vs mppi_hybrid | 290 | +0.57 | 39 % | 2.0e-02 |
 | path courses | pid vs mppi_urdf | 290 | -0.41 | 65 % | 2.9e-06 |
+| path courses | pid vs ppo | 257 | +0.07 | 46 % | 8.7e-01 |
 | path courses | lqi vs indi | 290 | +0.26 | 18 % | 2.3e-19 |
 | path courses | lqi vs indi_sg | 290 | +0.26 | 15 % | 7.5e-28 |
 | path courses | lqi vs mppi_hybrid | 290 | -0.36 | 65 % | 3.5e-13 |
 | path courses | lqi vs mppi_urdf | 290 | -1.36 | 95 % | 8.1e-47 |
+| path courses | lqi vs ppo | 257 | -1.18 | 91 % | 1.5e-34 |
 | path courses | indi vs indi_sg | 290 | -0.00 | 52 % | 1.9e-02 |
 | path courses | indi vs mppi_hybrid | 290 | -0.61 | 78 % | 3.6e-23 |
 | path courses | indi vs mppi_urdf | 290 | -1.58 | 95 % | 2.5e-47 |
+| path courses | indi vs ppo | 257 | -1.72 | 96 % | 2.1e-38 |
 | path courses | indi_sg vs mppi_hybrid | 290 | -0.65 | 79 % | 3.1e-25 |
 | path courses | indi_sg vs mppi_urdf | 290 | -1.58 | 96 % | 4.2e-48 |
+| path courses | indi_sg vs ppo | 257 | -1.73 | 100 % | 6.6e-44 |
 | path courses | mppi_hybrid vs mppi_urdf | 305 | -0.89 | 86 % | 1.4e-25 |
+| path courses | mppi_hybrid vs ppo | 265 | -0.74 | 66 % | 3.6e-06 |
+| path courses | mppi_urdf vs ppo | 265 | +0.28 | 44 % | 3.4e-01 |
 
-Controller compute time per step (median): dsl_pid 1.244 ms, pid 0.731 ms, lqi 0.303 ms, indi 0.687 ms, indi_sg 0.637 ms, mppi_hybrid 78.483 ms, mppi_urdf 34.481 ms.
+Controller compute time per step (median): dsl_pid 1.244 ms, pid 0.731 ms, lqi 0.303 ms, indi 0.687 ms, indi_sg 0.637 ms, mppi_hybrid 78.483 ms, mppi_urdf 34.481 ms, ppo 1.173 ms.
 
-_2975 episodes, git 15c6cca-dirty, config 5aad03090e_
+_3400 episodes, git 15c6cca-dirty, config 5aad03090e_
 <!-- STAGE1-RESULTS:END -->
 
-## R4 – MPPI with the learned surrogate (in progress)
+## R2 – INDI
+
+`src/dronelab/control/indi.py`. Instead of inverting a model of the forces and torques, INDI
+changes the last applied wrench by what is still missing for the desired acceleration, using the
+measured acceleration:
+
+    τ_cmd = τ_f + J (ω̇_des − ω̇_f)          f_cmd = f_f + m (a_des − a_f)
+
+Unmodelled forces and torques (drag, wind, payload, ground effect) are in the measurement and
+cancel out; only mass, inertia and the motor time constant are used. The accelerations are finite
+differences of the observed velocity and body rates. The applied wrench comes from the sent motor
+commands through a model of the motor lag and is filtered with the same low-pass as the
+measurement, so both are synchronous. Outer loops are the same as in the cascaded PID: position
+PD law, thrust vector, attitude, body rates. There is no integrator: steady disturbances are
+measured instead.
+
+Variant `indi_sg`: the finite difference of the noisy velocity amplifies its noise. The
+translation uses the slope of a straight line through the last few velocities (Savitzky-Golay,
+order 1) instead of the low-pass. It tunes to the same J (0.71 vs 0.70) and is more robust under
+high sensor noise (gate course at `noise_high`: 1.7 vs 4.8 cm).
+
+## R3 – PPO tracking policy (first round)
+
+`src/dronelab/control/rl_env.py`, `rl_policy.py`, `scripts/train_rl.py`. A PPO policy
+(Stable-Baselines3, MLP 128 × 128) outputs collective thrust and desired body rates; the rate loop
+of the tuned PID turns them into motor speeds, as in the MPPI. Observation (32 values, yaw frame):
+position and velocity error, reference acceleration, reference positions 0.2 / 0.4 / 0.6 s ahead,
+attitude, body rates, height, last action. Reward per step:
+1 − min(error / 0.3 m, 1) − 0.1 |Δaction| − 0.005 |ω|², −50 and episode end on a crash or more
+than 1 m error. Training episodes: 10 s pieces of random tuning-family courses (seeds 10 000+) at
+0.25–1.5 m/s, `real` world, nominal.
+
+Protocol: 6 hyperparameter variants × 1 M steps, then the best one with 3 seeds × 3 M steps.
+Every saved checkpoint (every 100 k steps) was flown on the same 40 validation episodes and scored
+with the same objective J as the tuned controllers; the benchmark uses the best checkpoint
+(seed 0 at 2.4 M steps, J 1.62; LQI 0.80, INDI 0.70). Training cost: 0.8 h (1.6 CPU-h) per
+1 M steps on 2 cores.
+
+![validation J over training](results/rl/r3/j_over_steps.png)
+
+What we found:
+
+- J stops improving after 0.2–1 M steps. Two of three seeds get worse after that, one of them
+  crashes in a third of the validation flights at 3 M steps. The training reward stays flat at
+  the same time, so it cannot be used to pick a checkpoint.
+- The policy tracks about as well as LQI on validation (6.2 vs 5.6 cm), but changes its motor
+  commands three times as much. The action-change penalty makes up only 0.2 % of the reward, so
+  the policy has almost no reason to be smooth, while J weights smoothness by 0.3.
+- In the benchmark PPO is less reliable than the classical controllers (figure-eight at 1 m/s:
+  80 % success) and drops to 50 % success at 3 m/s. It is the only controller besides MPPI that
+  survives 100 ms motor lag on the gate course.
+
+Running: a domain-randomisation variant (mass, wind, motor lag) and two ablations of the late
+instability (learning rate 1e-4; action-change penalty 0.3 instead of 0.1).
+
+## R4 – MPPI with the learned surrogate
 
 `src/dronelab/control/mppi.py`. Every control step K = 512 perturbed sequences of (collective thrust, desired body rates) over H = 20 steps (0.42 s, the horizon the surrogate was trained on) are rolled out with a model from the [surrogate subproject](../surrogate/README.md), scored against the reference preview and averaged with weights exp(−J/λ); the first command is applied, the sequence is shifted and reused (warm start). Variants: `mppi_hybrid` (`phys+mlp`, the learned residual model) and `mppi_urdf` (data-sheet physics, no learning; benchmarked with the hybrid gains, not tuned on its own).
 
@@ -335,7 +406,7 @@ MPPI wins on J through the command smoothness (less than half of LQI's command c
 
 **Comparison with published MPPI for quadrotors.** Minařík et al. [3] use the same interface (thrust + body rates) with a 1.5 s horizon of coarse 0.1 s steps and an analytic model, and report that MPPI loses to a geometric SE(3) controller in nominal tracking. Kotek et al. [4] show that modelling the low-level rate controller and the motors inside the rollout is the main nominal gain (here: the P rate loop in the rollout and the motor state in the surrogate) and add an L1 adaptive loop on the command; our disturbance estimate plays a similar role inside the prediction (ablation `_nodob` in the benchmark). Not taken over: longer horizons (the surrogate is trained at 48 Hz; 0.42 s suffice for the courses, a longer horizon would cost 1.5–2× compute), saturation handling inside the rollout like the real mixer (only matters at the motor limits – revisit if MPPI falls behind at 2–3 m/s), delay compensation (the simulation has no latency).
 
-Next: benchmark `r1` with `mppi_hybrid` and `mppi_urdf` (Part A + B), ablations `mppi_hybrid_nodob` / `mppi_hybrid_cand` on Part B (`configs/benchmark/r1_mppi_ablation.yaml`), both without `--log-flights`.
+**Benchmark.** Nominally `mppi_hybrid` is about as accurate as INDI and LQI (1.2 cm at 1 m/s, 2.8 cm at 3 m/s) and the only controller that flies every course with 100 ms motor lag. Under constant disturbances it falls behind: 0.09 N wind on the gate course 6.9 cm (LQI 2.4, INDI 1.3), 30 % extra mass 16.5 cm. The disturbance estimate in the prediction is apparently not enough to remove a steady offset on the command; this was not investigated further. `mppi_urdf` (data-sheet physics) is about twice as inaccurate as `mppi_hybrid` nominally, which is the value of the learned residual in closed loop. The ablations `mppi_hybrid_nodob` / `mppi_hybrid_cand` on Part B (`configs/benchmark/r1_mppi_ablation.yaml`) are configured but not flown yet.
 
 ## References
 

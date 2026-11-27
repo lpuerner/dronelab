@@ -1,0 +1,30 @@
+{
+  "run": "search_lr6e-4",
+  "hp": {
+    "learning_rate": 0.0006,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      128,
+      128
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 0,
+  "randomize": false,
+  "steps": 1000000,
+  "wall_h": 0.8148545175128513,
+  "cpu_h": 1.6297090350257026,
+  "steps_per_s": 340.8924805689586,
+  "rmse": 0.09353850988149298,
+  "smoothness": 0.051747500776385125,
+  "rmse_rel": 1.3924492262869612,
+  "smooth_rel": 44.420766605728865,
+  "crash_rate": 0.0,
+  "J": 14.718679208005621
+}

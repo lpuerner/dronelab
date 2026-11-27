@@ -1,0 +1,30 @@
+{
+  "run": "search_gamma098",
+  "hp": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.98,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      128,
+      128
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 0,
+  "randomize": false,
+  "steps": 1000000,
+  "wall_h": 0.8199614373180601,
+  "cpu_h": 1.6399228746361203,
+  "steps_per_s": 338.7693190625363,
+  "rmse": 0.07473742024200737,
+  "smoothness": 0.004343919436206592,
+  "rmse_rel": 0.89622739082811,
+  "smooth_rel": 3.6226548502112945,
+  "crash_rate": 0.05,
+  "J": 2.033023845891498
+}

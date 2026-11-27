@@ -42,5 +42,5 @@ def compute_metrics(traj: Trajectory, settle_tol: float = 0.05) -> dict[str, flo
         "flight_time": float(traj.t[-1]) if len(traj.t) else 0.0,
         "ctrl_ms_per_step": 1e3 * traj.wall_time_per_step,
     }
-    m.update(evaluate_gates(traj.pos, traj.gates))
+    m.update(evaluate_gates(traj.pos, traj.gates, traj.t))
     return m

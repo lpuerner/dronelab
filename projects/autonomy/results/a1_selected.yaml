@@ -1,0 +1,18 @@
+indi:
+  a1:
+    acc_frac: 0.6
+    median_lap_time: 3.735
+    success: 1.0
+  a1plus:
+    acc_frac: 0.5
+    median_lap_time: 3.672
+    success: 0.975
+lqi:
+  a1:
+    acc_frac: 0.6
+    median_lap_time: 3.75
+    success: 1.0
+  a1plus:
+    acc_frac: 0.4
+    median_lap_time: 4.144
+    success: 1.0

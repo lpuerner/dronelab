@@ -1,0 +1,30 @@
+{
+  "run": "search_net64",
+  "hp": {
+    "learning_rate": 0.0003,
+    "n_steps": 2048,
+    "batch_size": 256,
+    "n_epochs": 10,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.2,
+    "ent_coef": 0.0,
+    "net": [
+      64,
+      64
+    ],
+    "log_std_init": -1.0
+  },
+  "seed": 0,
+  "randomize": false,
+  "steps": 1000000,
+  "wall_h": 0.8128083809216817,
+  "cpu_h": 1.6256167618433635,
+  "steps_per_s": 341.7506318805331,
+  "rmse": 0.13335380165274008,
+  "smoothness": 0.009074928950075514,
+  "rmse_rel": 1.169848630167269,
+  "smooth_rel": 7.215924370412999,
+  "crash_rate": 0.15,
+  "J": 3.4846259412911684
+}

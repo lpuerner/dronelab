@@ -33,13 +33,13 @@ from dronelab.core.eval.scenarios import scenario_order  # noqa: E402
 # fixed categorical order (colour follows the controller, never its rank)
 COLORS = {"dsl_pid": "#2a78d6", "pid": "#eb6834", "lqr": "#1baf7a", "lqi": "#eda100",
           "indi": "#8a4fd1", "indi_sg": "#c9a7f0", "mppi_hybrid": "#d6336c",
-          "mppi_urdf": "#7d7a73"}
+          "mppi_urdf": "#7d7a73", "ppo": "#0e9aa7"}
 MARKERS = {"dsl_pid": "o", "pid": "s", "lqr": "^", "lqi": "D", "indi": "v", "indi_sg": "<",
-           "mppi_hybrid": "P", "mppi_urdf": "X"}
+           "mppi_hybrid": "P", "mppi_urdf": "X", "ppo": "*"}
 LABELS = {"dsl_pid": "DSL-PID (untuned anchor)", "pid": "PID (tuned)",
           "lqr": "LQR (tuned)", "lqi": "LQI (tuned)", "indi": "INDI (tuned)",
           "indi_sg": "INDI-SG (tuned)", "mppi_hybrid": "MPPI-hybrid (tuned)",
-          "mppi_urdf": "MPPI-urdf (hybrid gains)"}
+          "mppi_urdf": "MPPI-urdf (hybrid gains)", "ppo": "PPO (best checkpoint)"}
 SEQ = LinearSegmentedColormap.from_list(
     "blue", ["#cde2fb", "#86b6ef", "#3987e5", "#256abf", "#184f95", "#0d366b"])
 INK, MUTED, GRID = "#1f1f1e", "#6b6a66", "#e4e3df"

@@ -1,0 +1,34 @@
+# R3: PPO path-tracking policy (thrust + body rates), see src/dronelab/control/rl_env.py.
+# Search: 6 configurations x 1 M steps, selected by the tuning objective J on the 40
+# validation episodes (same as PID / LQI / INDI). Final: best configuration, 3 seeds x 3 M
+# (nominal) + 1 seed x 3 M with domain randomisation (mass, wind, motor lag).
+name: r3
+n_envs: 2
+steps_search: 1000000
+steps_final: 3000000
+seeds_final: [0, 1, 2]
+seeds_dr: [0]
+steps_dr: 1000000        # 3 M final runs got worse after ~1 M steps (j_over_steps.png)
+# Ablation of the late instability: best configuration with one change, seed 0, 2 M steps.
+steps_ablation: 2000000
+ablation:
+  - {name: lr1e-4, learning_rate: 1.0e-4}
+  - {name: wdact03, w_dact: 0.3}   # stronger action-change penalty (default 0.1)
+base:
+  learning_rate: 3.0e-4
+  n_steps: 2048          # per env -> 4096 samples per update
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  net: [128, 128]
+  log_std_init: -1.0     # initial action std 0.37 (std 1 crashes almost every start)
+search:
+  - {name: base}
+  - {name: lr1e-4, learning_rate: 1.0e-4}
+  - {name: lr6e-4, learning_rate: 6.0e-4}
+  - {name: net64, net: [64, 64]}
+  - {name: gamma098, gamma: 0.98}
+  - {name: ent005, ent_coef: 0.005}

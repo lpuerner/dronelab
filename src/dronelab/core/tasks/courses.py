@@ -131,18 +131,27 @@ class _VariableSpeedProfile:
     Same interface as :class:`_SpeedProfile`."""
 
     def __init__(self, length: float, seg_ends: np.ndarray, seg_speeds: np.ndarray, a: float,
-                 ds: float = 0.01):
+                 ds: float = 0.01, curv=None):
+        """``curv`` (callable s -> |curvature|): ``a`` is then the total acceleration budget,
+        the speed is capped by sqrt(a / kappa) and the passes use the tangential remainder
+        sqrt(a^2 - (v^2 kappa)^2) (friction circle, used by the autonomy planner)."""
         self.length, self.a = float(length), float(a)
         n = max(int(np.ceil(length / ds)), 2) + 1
         self._s = np.linspace(0.0, length, n)
         h = self._s[1] - self._s[0]
         idx = np.minimum(np.searchsorted(seg_ends, self._s, side="right"), len(seg_speeds) - 1)
         v = np.asarray(seg_speeds, float)[idx]
+        kap = np.zeros(n) if curv is None else np.asarray(curv(self._s), float)
+        v = np.minimum(v, np.sqrt(a / np.maximum(kap, 1e-9)))
         v[0] = v[-1] = 0.0
+
+        def a_tan(i: int, vi: float) -> float:
+            return np.sqrt(max(a**2 - (vi**2 * kap[i]) ** 2, 0.0))
+
         for i in range(1, n):  # acceleration limit
-            v[i] = min(v[i], np.sqrt(v[i - 1] ** 2 + 2 * a * h))
+            v[i] = min(v[i], np.sqrt(v[i - 1] ** 2 + 2 * a_tan(i - 1, v[i - 1]) * h))
         for i in range(n - 2, -1, -1):  # braking limit
-            v[i] = min(v[i], np.sqrt(v[i + 1] ** 2 + 2 * a * h))
+            v[i] = min(v[i], np.sqrt(v[i + 1] ** 2 + 2 * a_tan(i + 1, v[i + 1]) * h))
         self._v = v
         dt = 2 * h / np.maximum(v[1:] + v[:-1], 1e-9)
         self._t = np.concatenate([[0.0], np.cumsum(dt)])

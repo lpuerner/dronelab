@@ -2,7 +2,8 @@ from dronelab.core.controller import Controller, Reference
 
 __all__ = ["CONTROLLERS", "Controller", "Reference", "make_controller"]
 
-CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi", "indi", "indi_sg", "mppi_hybrid", "mppi_urdf")
+CONTROLLERS = ("dsl_pid", "pid", "lqr", "lqi", "indi", "indi_sg", "mppi_hybrid", "mppi_urdf",
+               "ppo")
 
 
 def make_controller(
@@ -39,6 +40,10 @@ def _base(name: str, params, ctrl_dt: float, gains: dict | None) -> Controller:
 
         return INDIController(params, ctrl_dt, gains,
                               acc_window=ACC_WIN if name == "indi_sg" else 0)
+    if name.startswith("ppo"):  # ppo, ppo_dr, ppo_s1, ...: a trained policy, see rl_policy
+        from dronelab.control.rl_policy import PPOController
+
+        return PPOController(params, ctrl_dt, gains)
     base = name.removesuffix("_cand").removesuffix("_nodob")
     if base in ("mppi_hybrid", "mppi_urdf", "mppi_mlp"):  # suffixes: ablations (R4.5)
         from dronelab.control.mppi import MPPIController

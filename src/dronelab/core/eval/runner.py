@@ -11,7 +11,7 @@ from dronelab.core.backends.base import Backend
 from dronelab.core.config import ArenaConfig, InitNoiseConfig
 from dronelab.core.controller import Controller
 from dronelab.core.tasks.courses import Course
-from dronelab.core.tasks.gates import Gate
+from dronelab.core.tasks.gates import Gate, GateTracker
 
 
 @dataclass
@@ -73,7 +73,14 @@ def run_episode(
     seed: int = 0,
     stop_on_crash: bool = True,
     init_noise: InitNoiseConfig | None = None,
+    gate_frames: bool = False,
+    finish_time: float = 0.5,
 ) -> Trajectory:
+    """Fly ``course`` to its end (or the first crash).
+
+    ``gate_frames`` (autonomy): touching a gate frame is a crash, and the episode ends
+    ``finish_time`` after the last gate was passed in order.
+    """
     arena = arena or ArenaConfig()
     p0, rpy0, v0 = sample_initial_state(course.start, seed, init_noise)
     state = backend.reset(p0, seed=seed, init_rpy=rpy0, init_vel=v0)
@@ -86,6 +93,8 @@ def run_episode(
     log: dict[str, list] = {k: [] for k in keys}
     crash = None
     ctrl_time = 0.0
+    tracker = GateTracker(list(course.gates)) if gate_frames else None
+    t_finish = None
     for k in range(n_steps):
         t = k * backend.dt
         ref = course.reference(t)
@@ -96,10 +105,18 @@ def run_episode(
                   ref.pos, ref.vel, ref.acc, rpm)
         for key, val in zip(keys[:-1], values, strict=True):
             log[key].append(val)
+        p_prev = log["pos"][-1]
         state = backend.step(rpm)
         log["rpm_app"].append(backend.last_applied_rpm)
         crash = check_crash(t + backend.dt, state.pos, state.rpy, arena)
+        if tracker is not None:
+            if not crash and any(g.frame_hit(state.pos) for g in tracker.gates):
+                crash = "gate_frame"
+            if tracker.update(p_prev, state.pos, t, backend.dt) and tracker.done:
+                t_finish = t + finish_time
         if crash and stop_on_crash:
+            break
+        if t_finish is not None and t >= t_finish:
             break
 
     a = {k: np.asarray(v) for k, v in log.items()}
